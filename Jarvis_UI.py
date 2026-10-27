@@ -1,14 +1,24 @@
 import asyncio
 import html
 import logging
+from pathlib import Path
+import sys
+
+# Ensure project root is in sys.path
+PROJECT_ROOT = Path(__file__).resolve().parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -20,31 +30,49 @@ from PySide6.QtWidgets import (
 from qasync import asyncSlot
 
 from ai_core_visualization import AICoreVisualization
-from config import load_config, save_config
-from gemini_api import GeminiAIProvider
+from automation_service import WindowsAutomationService
+from config import APP_DIR, get_config_value, load_config, save_config
+from gemini_api import DEFAULT_MODEL, SUPPORTED_MODELS, GeminiAIProvider
+from gmail_service import GmailService
 from gui_components import LiquidGlassBackground, LiquidGlassCard
+from memory_service import MemoryService
+from task_service import TaskService
+from ui_views import (
+    AutomationManagementWidget,
+    EmailManagementWidget,
+    MemoryManagementWidget,
+    TaskManagementWidget,
+)
 from utils import show_error_message, show_info_message
+from voice_service import VoiceManager
 
 logger = logging.getLogger(__name__)
 
 MASKED_KEY = "********"
-DEFAULT_MODEL = "gemini-1.5-flash"
 
 
 class JarvisMainWindow(QMainWindow):
     """
     The main window for the JARVIS AI desktop assistant, featuring a Liquid Glass UI.
+    Houses Chat, Email, Automation, Tasks, Memory, and Settings views.
     """
 
     ai_state_changed = Signal(str)  # Updates the AI core visualization state
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("JARVIS AI Assistant")
+        self.setWindowTitle("JARVIS AI Assistant - Personal Desktop Intelligence")
         self.resize(1200, 800)
         self.setMinimumSize(1024, 768)
 
+        # Initialize Services
         self.ai_provider = GeminiAIProvider()
+        self.task_service = TaskService()
+        self.memory_service = MemoryService()
+        self.gmail_service = GmailService()
+        self.automation_service = WindowsAutomationService()
+        self.voice_manager = VoiceManager()
+
         self.conversation_history = []  # list of (role, text) tuples, role in {"User", "JARVIS"}
         self._busy = False
         self._sidebar_buttons = []
@@ -100,6 +128,12 @@ class JarvisMainWindow(QMainWindow):
 
         sidebar_layout.addStretch()
 
+        # Version stamp
+        ver_lbl = QLabel("v2.0 Liquid Glass")
+        ver_lbl.setAlignment(Qt.AlignCenter)
+        ver_lbl.setStyleSheet("color: #4A5568; font-size: 11px;")
+        sidebar_layout.addWidget(ver_lbl)
+
         self.root_layout.addWidget(self.sidebar)
 
         # --- Main content area ---
@@ -111,20 +145,29 @@ class JarvisMainWindow(QMainWindow):
         self.stacked_widget = QStackedWidget(self.content_area)
         self.content_layout.addWidget(self.stacked_widget)
 
+        # 0: Chat View
         self._setup_chat_view()
-        self.stacked_widget.addWidget(self.chat_view)  # 0
+        self.stacked_widget.addWidget(self.chat_view)
 
-        self.stacked_widget.addWidget(self._create_placeholder_view(
-            "Email Integration", "Manage and compose emails using Gemini AI."))  # 1
-        self.stacked_widget.addWidget(self._create_placeholder_view(
-            "Windows Automation", "Control apps, automate tasks, and run desktop workflows."))  # 2
-        self.stacked_widget.addWidget(self._create_placeholder_view(
-            "Task Management", "Track goals, reminders, and daily task lists."))  # 3
-        self.stacked_widget.addWidget(self._create_placeholder_view(
-            "Memory & Personalization", "View and refine JARVIS long-term memory & context."))  # 4
+        # 1: Email View
+        self.email_view = EmailManagementWidget(self.gmail_service, self.content_area)
+        self.stacked_widget.addWidget(self.email_view)
 
+        # 2: Windows Automation View
+        self.automation_view = AutomationManagementWidget(self.automation_service, self.content_area)
+        self.stacked_widget.addWidget(self.automation_view)
+
+        # 3: Task Management View
+        self.task_view = TaskManagementWidget(self.task_service, self.content_area)
+        self.stacked_widget.addWidget(self.task_view)
+
+        # 4: Memory & Personalization View
+        self.memory_view = MemoryManagementWidget(self.memory_service, self.content_area)
+        self.stacked_widget.addWidget(self.memory_view)
+
+        # 5: Settings View
         self._setup_settings_view()
-        self.stacked_widget.addWidget(self.settings_view)  # 5
+        self.stacked_widget.addWidget(self.settings_view)
 
         self.stacked_widget.currentChanged.connect(self._on_page_changed)
         self.root_layout.addWidget(self.content_area, stretch=1)
@@ -136,7 +179,7 @@ class JarvisMainWindow(QMainWindow):
             QMainWindow {
                 background: transparent;
             }
-            QLabel, QPushButton, QLineEdit, QTextEdit {
+            QLabel, QPushButton, QLineEdit, QTextEdit, QComboBox, QCheckBox {
                 font-family: 'Segoe UI', 'Roboto', sans-serif;
                 color: #E0E0E0;
             }
@@ -159,7 +202,7 @@ class JarvisMainWindow(QMainWindow):
                 color: rgba(224, 224, 224, 80);
                 border: 1px solid rgba(255, 255, 255, 15);
             }
-            QLineEdit, QTextEdit {
+            QLineEdit, QTextEdit, QComboBox {
                 background-color: rgba(15, 23, 42, 180);
                 border: 1px solid rgba(0, 200, 255, 60);
                 border-radius: 10px;
@@ -167,8 +210,15 @@ class JarvisMainWindow(QMainWindow):
                 selection-background-color: #00C8FF;
                 selection-color: #000000;
             }
-            QLineEdit:focus, QTextEdit:focus {
+            QLineEdit:focus, QTextEdit:focus, QComboBox:focus {
                 border: 1px solid rgba(0, 200, 255, 180);
+            }
+            QComboBox QAbstractItemView {
+                background-color: #0F172A;
+                color: #FFFFFF;
+                selection-background-color: #00C8FF;
+                selection-color: #000000;
+                border: 1px solid #00C8FF;
             }
             QScrollArea {
                 background: transparent;
@@ -201,8 +251,17 @@ class JarvisMainWindow(QMainWindow):
         return button
 
     def _on_page_changed(self, index):
-        """Updates active sidebar button styling on page change."""
+        """Updates active sidebar button styling and refreshes view data."""
         self._update_sidebar_styles(index)
+        if index == 1:
+            self.email_view.update_auth_status()
+        elif index == 2:
+            self.automation_view.refresh_system_status()
+            self.automation_view.refresh_audit_log()
+        elif index == 3:
+            self.task_view.refresh_tasks()
+        elif index == 4:
+            self.memory_view.refresh_memories()
 
     def _update_sidebar_styles(self, active_index):
         """Highlights the active sidebar navigation tab."""
@@ -218,25 +277,6 @@ class JarvisMainWindow(QMainWindow):
                 """)
             else:
                 btn.setStyleSheet("")
-
-    def _create_placeholder_view(self, title, description):
-        """Creates a placeholder card for upcoming features."""
-        view = LiquidGlassCard(self.content_area, corner_radius=24)
-        layout = QVBoxLayout(view)
-        layout.setAlignment(Qt.AlignCenter)
-        layout.setSpacing(10)
-
-        label_title = QLabel(f"<h2 style='color: #00C8FF;'>{title}</h2>")
-        label_title.setAlignment(Qt.AlignCenter)
-        label_desc = QLabel(f"<p style='color: #A0AEC0; font-size: 14px;'>{description}</p>")
-        label_desc.setAlignment(Qt.AlignCenter)
-        label_status = QLabel("<p style='color: #718096; font-style: italic;'>Feature under active development</p>")
-        label_status.setAlignment(Qt.AlignCenter)
-
-        layout.addWidget(label_title)
-        layout.addWidget(label_desc)
-        layout.addWidget(label_status)
-        return view
 
     def _setup_chat_view(self):
         """Sets up the main interactive chat interface."""
@@ -272,7 +312,7 @@ class JarvisMainWindow(QMainWindow):
         status_layout.addWidget(self.ai_status_label)
         status_layout.addWidget(self.model_status_label)
 
-        # Clear chat history button in status card
+        # Clear chat history button in status card (does NOT touch tasks or persistent memories)
         self.clear_chat_button = QPushButton("Clear Chat History")
         self.clear_chat_button.setFixedHeight(32)
         self.clear_chat_button.setCursor(Qt.PointingHandCursor)
@@ -313,7 +353,7 @@ class JarvisMainWindow(QMainWindow):
         chat_layout.addWidget(input_panel)
 
     def _setup_settings_view(self):
-        """Sets up configuration settings for API keys and models."""
+        """Sets up comprehensive configuration settings for API keys, models, memory, automation, and voice."""
         self.settings_view = QWidget(self.content_area)
         settings_layout = QVBoxLayout(self.settings_view)
         settings_layout.setContentsMargins(0, 0, 0, 0)
@@ -327,23 +367,24 @@ class JarvisMainWindow(QMainWindow):
         scroll_area.setWidget(scroll_content)
         settings_layout.addWidget(scroll_area)
 
-        # Gemini API Config Card
-        gemini_card = LiquidGlassCard(scroll_content, corner_radius=24)
+        # 1. Gemini API Config Card
+        gemini_card = LiquidGlassCard(scroll_content, corner_radius=20)
         gemini_layout = QVBoxLayout(gemini_card)
-        gemini_layout.setContentsMargins(20, 20, 20, 20)
+        gemini_layout.setContentsMargins(20, 16, 20, 16)
         scroll_layout.addWidget(gemini_card)
 
-        gemini_layout.addWidget(QLabel("<h3 style='color: #00C8FF;'>Google Gemini API Settings</h3>"))
+        gemini_layout.addWidget(QLabel("<h3 style='color: #00C8FF; margin: 0;'>Google Gemini AI Configuration</h3>"))
 
-        gemini_layout.addWidget(QLabel("Gemini API Key:"))
+        gemini_layout.addWidget(QLabel("Gemini API Key (stored securely in OS Keyring / Credential Manager):"))
         self.gemini_api_key_input = QLineEdit()
         self.gemini_api_key_input.setEchoMode(QLineEdit.Password)
-        self.gemini_api_key_input.setPlaceholderText("Enter AI Studio API Key")
+        self.gemini_api_key_input.setPlaceholderText("Enter AI Studio API Key (AIzaSy...)")
         gemini_layout.addWidget(self.gemini_api_key_input)
 
-        gemini_layout.addWidget(QLabel("Select Gemini Model:"))
-        self.gemini_model_selector = QLineEdit()
-        self.gemini_model_selector.setPlaceholderText("e.g. gemini-1.5-flash, gemini-2.0-flash, gemini-1.5-pro")
+        gemini_layout.addWidget(QLabel("Active Gemini Model:"))
+        self.gemini_model_selector = QComboBox()
+        self.gemini_model_selector.setEditable(True)
+        self.gemini_model_selector.addItems(SUPPORTED_MODELS)
         gemini_layout.addWidget(self.gemini_model_selector)
 
         self.save_key_button = QPushButton("Save & Validate Credentials")
@@ -352,21 +393,110 @@ class JarvisMainWindow(QMainWindow):
         self.save_key_button.clicked.connect(self._save_and_test_gemini_key)
         gemini_layout.addWidget(self.save_key_button)
 
+        # 2. Personalization & Memory Card
+        mem_card = LiquidGlassCard(scroll_content, corner_radius=20)
+        mem_layout = QVBoxLayout(mem_card)
+        mem_layout.setContentsMargins(20, 16, 20, 16)
+        scroll_layout.addWidget(mem_card)
+
+        mem_layout.addWidget(QLabel("<h3 style='color: #7FFFD4; margin: 0;'>Memory & Context Injection</h3>"))
+        self.mem_enabled_checkbox = QCheckBox("Enable long-term memory and user preferences injection into AI prompts")
+        self.mem_enabled_checkbox.setChecked(self.memory_service.is_memory_enabled())
+        self.mem_enabled_checkbox.toggled.connect(self._on_memory_checkbox_toggled)
+        mem_layout.addWidget(self.mem_enabled_checkbox)
+
+        # 3. Windows Automation Security Card
+        auto_card = LiquidGlassCard(scroll_content, corner_radius=20)
+        auto_layout = QVBoxLayout(auto_card)
+        auto_layout.setContentsMargins(20, 16, 20, 16)
+        scroll_layout.addWidget(auto_card)
+
+        auto_layout.addWidget(QLabel("<h3 style='color: #FFAA00; margin: 0;'>Automation Security</h3>"))
+        self.confirm_auto_checkbox = QCheckBox("Require explicit confirmation before launching applications or workflows")
+        self.confirm_auto_checkbox.setChecked(bool(get_config_value("automation_require_confirmation", True)))
+        self.confirm_auto_checkbox.toggled.connect(self._on_automation_confirm_toggled)
+        auto_layout.addWidget(self.confirm_auto_checkbox)
+
+        # 4. Voice Controls Card
+        voice_card = LiquidGlassCard(scroll_content, corner_radius=20)
+        voice_layout = QVBoxLayout(voice_card)
+        voice_layout.setContentsMargins(20, 16, 20, 16)
+        scroll_layout.addWidget(voice_card)
+
+        voice_layout.addWidget(QLabel("<h3 style='color: #00C8FF; margin: 0;'>Voice Engine Configuration</h3>"))
+        voice_row = QHBoxLayout()
+        self.voice_combo = QComboBox()
+        self.voice_combo.addItems(["Disabled", "Windows SAPI (Native TTS)"])
+        current_voice = get_config_value("voice_provider", "disabled")
+        if current_voice == "windows_sapi":
+            self.voice_combo.setCurrentText("Windows SAPI (Native TTS)")
+        else:
+            self.voice_combo.setCurrentText("Disabled")
+        self.voice_combo.currentIndexChanged.connect(self._on_voice_provider_changed)
+        voice_row.addWidget(self.voice_combo, stretch=2)
+
+        test_voice_btn = QPushButton("🔊 Test Voice")
+        test_voice_btn.setFixedHeight(36)
+        test_voice_btn.setCursor(Qt.PointingHandCursor)
+        test_voice_btn.clicked.connect(self._test_voice)
+        voice_row.addWidget(test_voice_btn, stretch=1)
+        voice_layout.addLayout(voice_row)
+
+        self.voice_status_lbl = QLabel(f"Voice Status: {self.voice_manager.get_status()}")
+        self.voice_status_lbl.setStyleSheet("color: #A0AEC0; font-size: 11px;")
+        voice_layout.addWidget(self.voice_status_lbl)
+
+        # 5. Environment & Storage Card
+        storage_card = LiquidGlassCard(scroll_content, corner_radius=20)
+        storage_layout = QVBoxLayout(storage_card)
+        storage_layout.setContentsMargins(20, 16, 20, 16)
+        scroll_layout.addWidget(storage_card)
+
+        storage_layout.addWidget(QLabel("<h3 style='color: #A0AEC0; margin: 0;'>Storage & Data Locations</h3>"))
+        storage_info = QLabel(
+            f"<b>Application Data:</b> <code>{APP_DIR}</code><br>"
+            f"<b>Tasks Database:</b> <code>{APP_DIR / 'tasks.db'}</code><br>"
+            f"<b>Memory Database:</b> <code>{APP_DIR / 'memory.db'}</code><br>"
+            f"<b>Gmail Credentials:</b> <code>{self.gmail_service.get_credentials_path()}</code>"
+        )
+        storage_info.setTextFormat(Qt.RichText)
+        storage_info.setStyleSheet("color: #718096; font-size: 11px; line-height: 1.5;")
+        storage_layout.addWidget(storage_info)
+
         scroll_layout.addStretch()
 
-    # ------------------------------------------------------------------ Logic & Settings
+    # ------------------------------------------------------------------ Logic & Settings Handlers
+
+    def _on_memory_checkbox_toggled(self, checked: bool):
+        self.memory_service.set_memory_enabled(checked)
+        self.memory_view.memory_toggle.setChecked(checked)
+
+    def _on_automation_confirm_toggled(self, checked: bool):
+        save_config({"automation_require_confirmation": checked})
+
+    def _on_voice_provider_changed(self):
+        text = self.voice_combo.currentText()
+        provider_type = "windows_sapi" if "Windows SAPI" in text else "disabled"
+        self.voice_manager.set_provider_type(provider_type)
+        self.voice_status_lbl.setText(f"Voice Status: {self.voice_manager.get_status()}")
+
+    def _test_voice(self):
+        if not self.voice_manager.is_available():
+            show_error_message("Voice Unavailable", f"Voice engine is not available: {self.voice_manager.get_status()}")
+            return
+        self.voice_manager.speak("Greetings! I am JARVIS, your personal desktop assistant.")
 
     def _clear_chat_history(self):
-        """Clears the chat history."""
+        """Clears the chat history without touching persistent tasks or memories."""
         self.conversation_history.clear()
         self.conversation_display.clear()
-        show_info_message("Chat Cleared", "Conversation history has been cleared.")
+        show_info_message("Chat Cleared", "Conversation history cleared. Tasks and persistent memories remain intact.")
 
     def _load_settings(self):
         """Loads non-sensitive config and secure secrets."""
         app_config = load_config()
         model_name = app_config.get("gemini_model", DEFAULT_MODEL)
-        self.gemini_model_selector.setText(model_name)
+        self.gemini_model_selector.setCurrentText(model_name)
         self.ai_provider.set_model(model_name)
         self.model_status_label.setText(f"Active Model: {model_name}")
 
@@ -385,7 +515,7 @@ class JarvisMainWindow(QMainWindow):
             self.ai_status_label.setText("AI Engine: Security Error")
 
     def _current_model_name(self):
-        return self.gemini_model_selector.text().strip() or DEFAULT_MODEL
+        return self.gemini_model_selector.currentText().strip() or DEFAULT_MODEL
 
     @asyncSlot()
     async def _save_and_test_gemini_key(self):
@@ -416,7 +546,7 @@ class JarvisMainWindow(QMainWindow):
         try:
             ok = await asyncio.to_thread(self.ai_provider.test_connection, model_name)
             if ok:
-                show_info_message("Success", "Successfully connected to Gemini API!")
+                show_info_message("Success", f"Successfully connected to Gemini API with {model_name}!")
                 self.ai_status_label.setText("AI Engine: Online & Ready")
                 self.gemini_api_key_input.setText(MASKED_KEY)
             else:
@@ -433,7 +563,7 @@ class JarvisMainWindow(QMainWindow):
 
     @asyncSlot()
     async def _send_command(self):
-        """Handles sending a command to JARVIS AI."""
+        """Handles sending a command to JARVIS AI with context injection and voice playback."""
         if self._busy:
             return
 
@@ -442,8 +572,10 @@ class JarvisMainWindow(QMainWindow):
             return
 
         if not self.ai_provider.is_configured():
-            show_error_message("Configuration Needed",
-                               "Gemini API key is not configured. Please set it in Settings.")
+            show_error_message(
+                "Configuration Needed",
+                "Gemini API key is not configured. Please set your key in Settings (⚙️)."
+            )
             return
 
         model_name = self._current_model_name()
@@ -452,6 +584,9 @@ class JarvisMainWindow(QMainWindow):
 
         formatted_history = self._build_gemini_history()
 
+        # Build prompt context from memory service
+        system_context = self.memory_service.build_context_for_prompt(user_text)
+
         self._set_busy(True)
         self._idle_timer.stop()
         self.ai_state_changed.emit("thinking")
@@ -459,9 +594,14 @@ class JarvisMainWindow(QMainWindow):
 
         try:
             response_text = await asyncio.to_thread(
-                self.ai_provider.send_message, formatted_history, model_name
+                self.ai_provider.send_message, formatted_history, model_name, system_context
             )
             self._handle_gemini_response(response_text)
+
+            # Speak response via voice manager if enabled
+            if self.voice_manager.is_available():
+                self.voice_manager.speak(response_text)
+
         except Exception as e:
             logger.exception("Error processing AI request.")
             self._handle_gemini_error(str(e))

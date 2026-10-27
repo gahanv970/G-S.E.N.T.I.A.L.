@@ -1,0 +1,436 @@
+"""
+Official Google Gmail API Service for G-AI-ASSISTANT.
+Implements OAuth 2.0 flow, message pagination, search, message body parsing,
+draft creation/editing, and strictly user-confirmed sending.
+"""
+
+import base64
+from dataclasses import asdict, dataclass
+from email.mime.text import MIMEText
+import html
+import logging
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+from google.auth.transport.requests import Request
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import Resource, build
+from googleapiclient.errors import HttpError
+
+from config import APP_DIR, get_config_value, save_config
+
+logger = logging.getLogger(__name__)
+
+# Scopes needed: Read messages, compose drafts, modify labels/state
+GMAIL_SCOPES = [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.compose",
+    "https://www.googleapis.com/auth/gmail.modify",
+]
+
+TOKEN_PATH = APP_DIR / "gmail_token.json"
+CREDENTIALS_PATH = APP_DIR / "gmail_credentials.json"
+
+
+@dataclass
+class EmailSummary:
+    id: str
+    thread_id: str
+    sender: str
+    subject: str
+    date: str
+    snippet: str
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class EmailDetail:
+    id: str
+    thread_id: str
+    sender: str
+    recipient: str
+    subject: str
+    date: str
+    snippet: str
+    body_text: str
+    body_html: Optional[str]
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class EmailDraft:
+    id: str
+    recipient: str
+    subject: str
+    body: str
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+class GmailService:
+    """
+    Dedicated service for interacting with the Gmail API via official OAuth 2.0.
+    """
+
+    def __init__(
+        self,
+        token_path: Optional[Path] = None,
+        credentials_path: Optional[Path] = None,
+    ):
+        self.token_path = token_path or TOKEN_PATH
+        self.credentials_path = credentials_path or CREDENTIALS_PATH
+        self._creds: Optional[Credentials] = None
+        self._service: Optional[Resource] = None
+        self._user_email: Optional[str] = None
+
+        self._load_stored_credentials()
+
+    def _load_stored_credentials(self) -> None:
+        """Loads and refreshes saved credentials from token file if present."""
+        if not self.token_path.exists():
+            return
+
+        try:
+            self._creds = Credentials.from_authorized_user_file(
+                str(self.token_path), GMAIL_SCOPES
+            )
+            if self._creds and self._creds.expired and self._creds.refresh_token:
+                try:
+                    self._creds.refresh(Request())
+                    self._save_token()
+                    logger.info("Gmail OAuth access token refreshed.")
+                except Exception as e:
+                    logger.warning(f"Could not refresh Gmail token: {e}")
+                    self._creds = None
+
+            if self._creds and self._creds.valid:
+                self._service = build("gmail", "v1", credentials=self._creds)
+                logger.info("Gmail API service initialized successfully from token.")
+        except Exception as e:
+            logger.error(f"Error loading Gmail credentials from {self.token_path}: {e}")
+            self._creds = None
+            self._service = None
+
+    def _save_token(self) -> None:
+        """Persists current credentials to token file."""
+        if not self._creds:
+            return
+        try:
+            self.token_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.token_path, "w", encoding="utf-8") as f:
+                f.write(self._creds.to_json())
+            logger.info(f"Gmail token saved to {self.token_path}")
+        except Exception as e:
+            logger.error(f"Failed to save token to {self.token_path}: {e}")
+
+    def is_authenticated(self) -> bool:
+        """Returns True if the Gmail client is authorized and valid."""
+        return bool(self._creds and self._creds.valid and self._service)
+
+    def get_credentials_path(self) -> Path:
+        """Returns the expected path for client secrets JSON."""
+        return self.credentials_path
+
+    def has_client_credentials(self) -> bool:
+        """Returns True if the OAuth client secrets file is present on disk."""
+        return self.credentials_path.exists()
+
+    def authenticate_oauth(self, client_secrets_path: Optional[str] = None) -> bool:
+        """
+        Runs the interactive OAuth2 flow using InstalledAppFlow.
+        Requires client_secrets JSON from Google Cloud Console.
+        """
+        creds_file = Path(client_secrets_path) if client_secrets_path else self.credentials_path
+        if not creds_file.exists():
+            raise FileNotFoundError(
+                f"OAuth client secrets file not found at: {creds_file}\n"
+                "Please download your client secrets JSON from Google Cloud Console."
+            )
+
+        try:
+            flow = InstalledAppFlow.from_client_secrets_file(
+                str(creds_file), GMAIL_SCOPES
+            )
+            # Use local server flow on an ephemeral port
+            self._creds = flow.run_local_server(port=0)
+            self._save_token()
+            self._service = build("gmail", "v1", credentials=self._creds)
+            email = self.get_user_email()
+            if email:
+                save_config({"gmail_user_email": email})
+            logger.info("Gmail OAuth authentication successful.")
+            return True
+        except Exception as e:
+            logger.exception("Gmail OAuth authentication failed.")
+            raise RuntimeError(f"Gmail OAuth Error: {e}") from e
+
+    def disconnect(self) -> None:
+        """Disconnects account, deletes token, and clears memory state."""
+        self._creds = None
+        self._service = None
+        self._user_email = None
+        if self.token_path.exists():
+            try:
+                self.token_path.unlink()
+                logger.info("Gmail token deleted.")
+            except Exception as e:
+                logger.warning(f"Could not delete token file: {e}")
+        save_config({"gmail_user_email": ""})
+        logger.info("Gmail account disconnected.")
+
+    def get_user_email(self) -> Optional[str]:
+        """Fetches the authenticated user's email address."""
+        if not self.is_authenticated():
+            return None
+        if self._user_email:
+            return self._user_email
+
+        try:
+            profile = self._service.users().getProfile(userId="me").execute()
+            self._user_email = profile.get("emailAddress")
+            return self._user_email
+        except Exception as e:
+            logger.error(f"Failed to fetch Gmail profile: {e}")
+            return None
+
+    # ------------------------------------------------------------------ Mailbox Operations
+
+    def list_messages(
+        self,
+        query: Optional[str] = None,
+        max_results: int = 15,
+        page_token: Optional[str] = None,
+    ) -> Tuple[List[EmailSummary], Optional[str]]:
+        """
+        Retrieves a paginated list of email summaries.
+        Returns (list_of_summaries, next_page_token).
+        """
+        if not self.is_authenticated():
+            raise RuntimeError("Gmail is not authenticated. Please connect your Google account.")
+
+        try:
+            kwargs: Dict[str, Any] = {
+                "userId": "me",
+                "maxResults": min(max(1, max_results), 50),
+            }
+            if query and query.strip():
+                kwargs["q"] = query.strip()
+            if page_token:
+                kwargs["pageToken"] = page_token
+
+            results = self._service.users().messages().list(**kwargs).execute()
+            messages = results.get("messages", [])
+            next_token = results.get("nextPageToken")
+
+            summaries: List[EmailSummary] = []
+            for msg_meta in messages:
+                msg_id = msg_meta["id"]
+                try:
+                    msg = self._service.users().messages().get(
+                        userId="me", id=msg_id, format="metadata",
+                        metadataHeaders=["From", "Subject", "Date"]
+                    ).execute()
+                    summaries.append(self._parse_summary(msg))
+                except Exception as e:
+                    logger.warning(f"Could not load metadata for message {msg_id}: {e}")
+
+            return summaries, next_token
+        except HttpError as e:
+            logger.error(f"Gmail API HTTP error while listing messages: {e}")
+            raise RuntimeError(f"Gmail API error: {e}") from e
+
+    def get_message_detail(self, message_id: str) -> Optional[EmailDetail]:
+        """
+        Retrieves full message details, decoding plain text and HTML content safely.
+        """
+        if not self.is_authenticated():
+            raise RuntimeError("Gmail is not authenticated.")
+
+        try:
+            msg = self._service.users().messages().get(
+                userId="me", id=message_id, format="full"
+            ).execute()
+            return self._parse_detail(msg)
+        except HttpError as e:
+            logger.error(f"Gmail error fetching message {message_id}: {e}")
+            raise RuntimeError(f"Failed to read email {message_id}: {e}") from e
+
+    # ------------------------------------------------------------------ Drafts & Sending
+
+    def create_draft(self, to: str, subject: str, body: str) -> EmailDraft:
+        """
+        Creates and saves a new draft in Gmail.
+        """
+        if not self.is_authenticated():
+            raise RuntimeError("Gmail is not authenticated.")
+
+        clean_to = (to or "").strip()
+        clean_subj = (subject or "").strip()
+        clean_body = body or ""
+
+        message = MIMEText(clean_body)
+        if clean_to:
+            message["to"] = clean_to
+        message["subject"] = clean_subj
+
+        raw = base64.urlsafe_b64encode(message.as_bytes()).decode("utf-8")
+        body_payload = {"message": {"raw": raw}}
+
+        try:
+            draft = self._service.users().drafts().create(
+                userId="me", body=body_payload
+            ).execute()
+            draft_id = draft["id"]
+            logger.info(f"Created Gmail draft id={draft_id}")
+            return EmailDraft(
+                id=draft_id,
+                recipient=clean_to,
+                subject=clean_subj,
+                body=clean_body,
+            )
+        except HttpError as e:
+            logger.error(f"Failed to create draft: {e}")
+            raise RuntimeError(f"Draft creation failed: {e}") from e
+
+    def update_draft(self, draft_id: str, to: str, subject: str, body: str) -> EmailDraft:
+        """
+        Updates an existing draft in Gmail.
+        """
+        if not self.is_authenticated():
+            raise RuntimeError("Gmail is not authenticated.")
+
+        clean_to = (to or "").strip()
+        clean_subj = (subject or "").strip()
+        clean_body = body or ""
+
+        message = MIMEText(clean_body)
+        if clean_to:
+            message["to"] = clean_to
+        message["subject"] = clean_subj
+
+        raw = base64.urlsafe_b64encode(message.as_bytes()).decode("utf-8")
+        body_payload = {"id": draft_id, "message": {"raw": raw}}
+
+        try:
+            updated = self._service.users().drafts().update(
+                userId="me", id=draft_id, body=body_payload
+            ).execute()
+            logger.info(f"Updated Gmail draft id={draft_id}")
+            return EmailDraft(
+                id=updated["id"],
+                recipient=clean_to,
+                subject=clean_subj,
+                body=clean_body,
+            )
+        except HttpError as e:
+            logger.error(f"Failed to update draft {draft_id}: {e}")
+            raise RuntimeError(f"Draft update failed: {e}") from e
+
+    def send_email(
+        self,
+        to: str,
+        subject: str,
+        body: str,
+        user_confirmed: bool = False,
+    ) -> str:
+        """
+        Sends an email.
+        CRITICAL SECURITY REQUIREMENT:
+        Requires explicit user_confirmed=True. If False, refuses to send.
+        """
+        if not user_confirmed:
+            raise PermissionError(
+                "Security check failed: Sending an email requires explicit user confirmation."
+            )
+
+        if not self.is_authenticated():
+            raise RuntimeError("Gmail is not authenticated.")
+
+        clean_to = (to or "").strip()
+        if not clean_to:
+            raise ValueError("Recipient email address cannot be empty.")
+
+        clean_subj = (subject or "").strip()
+        clean_body = body or ""
+
+        message = MIMEText(clean_body)
+        message["to"] = clean_to
+        message["subject"] = clean_subj
+
+        raw = base64.urlsafe_b64encode(message.as_bytes()).decode("utf-8")
+        body_payload = {"raw": raw}
+
+        try:
+            sent_msg = self._service.users().messages().send(
+                userId="me", body=body_payload
+            ).execute()
+            sent_id = sent_msg["id"]
+            logger.info(f"Email sent successfully id={sent_id} to={clean_to}")
+            return sent_id
+        except HttpError as e:
+            logger.error(f"Failed to send email: {e}")
+            raise RuntimeError(f"Email sending failed: {e}") from e
+
+    # ------------------------------------------------------------------ Parsers
+
+    def _parse_summary(self, msg: Dict[str, Any]) -> EmailSummary:
+        """Extracts summary information from Gmail message dict."""
+        headers = {h["name"].lower(): h["value"] for h in msg.get("payload", {}).get("headers", [])}
+        return EmailSummary(
+            id=msg.get("id", ""),
+            thread_id=msg.get("threadId", ""),
+            sender=headers.get("from", "Unknown Sender"),
+            subject=headers.get("subject", "(No Subject)"),
+            date=headers.get("date", ""),
+            snippet=html.unescape(msg.get("snippet", "")),
+        )
+
+    def _parse_detail(self, msg: Dict[str, Any]) -> EmailDetail:
+        """Extracts detailed headers and decoded body from Gmail message dict."""
+        payload = msg.get("payload", {})
+        headers = {h["name"].lower(): h["value"] for h in payload.get("headers", [])}
+
+        body_text = ""
+        body_html = None
+
+        def extract_parts(part: Dict[str, Any]):
+            nonlocal body_text, body_html
+            mime_type = part.get("mimeType", "")
+            body_data = part.get("body", {}).get("data")
+
+            if body_data:
+                try:
+                    decoded = base64.urlsafe_b64decode(body_data).decode("utf-8", errors="replace")
+                    if mime_type == "text/plain" and not body_text:
+                        body_text = decoded
+                    elif mime_type == "text/html" and not body_html:
+                        body_html = decoded
+                except Exception as e:
+                    logger.debug(f"Part decode error: {e}")
+
+            for subpart in part.get("parts", []):
+                extract_parts(subpart)
+
+        extract_parts(payload)
+
+        # Fallback to snippet if text body wasn't found
+        if not body_text:
+            body_text = html.unescape(msg.get("snippet", ""))
+
+        return EmailDetail(
+            id=msg.get("id", ""),
+            thread_id=msg.get("threadId", ""),
+            sender=headers.get("from", "Unknown Sender"),
+            recipient=headers.get("to", ""),
+            subject=headers.get("subject", "(No Subject)"),
+            date=headers.get("date", ""),
+            snippet=html.unescape(msg.get("snippet", "")),
+            body_text=body_text,
+            body_html=body_html,
+        )

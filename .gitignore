@@ -1,0 +1,20 @@
+# Bytecode and python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.pytest_cache/
+.pytest_cache/
+
+# Application data and secrets
+data/
+*.db
+*.db-journal
+.secrets_store
+gmail_token.json
+gmail_credentials.json
+
+# Environments
+venv/
+.env
+.venv/
+env/

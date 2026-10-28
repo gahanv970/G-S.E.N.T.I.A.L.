@@ -81,7 +81,7 @@ G-AI_ASSISTANT/
 
 1. **Gemini API Key**:
    - Open JARVIS AI and click **Settings** (⚙️) on the sidebar.
-   - Enter your Gemini API key and select your preferred model (`gemini-2.0-flash`).
+   - Enter your Gemini API key and select your preferred model (`gemini-3.8-flash`).
    - Click **Save & Validate Credentials**. Your key will be securely saved into the Windows Credential Manager.
 
 2. **Gmail OAuth Integration** (Optional):

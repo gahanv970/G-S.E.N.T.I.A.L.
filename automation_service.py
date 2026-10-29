@@ -269,14 +269,21 @@ class WindowsAutomationService:
     def get_system_status(self) -> ActionResult:
         """
         Collects system telemetry and resource metrics safely without external dependencies.
+        Handles both Windows and non-Windows (Linux/macOS) drive paths gracefully.
         """
         try:
             # Disk usage of system drive
-            system_drive = os.getenv("SystemDrive", "C:") + "\\"
+            if platform.system() == "Windows":
+                system_drive = os.getenv("SystemDrive", "C:")
+                if not system_drive.endswith(("\\", "/")):
+                    system_drive += "\\"
+            else:
+                system_drive = "/"
+
             total, used, free = shutil.disk_usage(system_drive)
             disk_total_gb = round(total / (1024**3), 1)
             disk_free_gb = round(free / (1024**3), 1)
-            disk_used_percent = round((used / total) * 100, 1)
+            disk_used_percent = round((used / total) * 100, 1) if total > 0 else 0.0
 
             data = {
                 "os": platform.system(),

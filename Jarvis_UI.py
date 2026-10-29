@@ -563,7 +563,7 @@ class JarvisMainWindow(QMainWindow):
 
     @asyncSlot()
     async def _send_command(self):
-        """Handles sending a command to JARVIS AI with context injection and voice playback."""
+        """Handles sending a command to JARVIS AI with intent understanding, safe action confirmation, and voice playback."""
         if self._busy:
             return
 
@@ -582,20 +582,65 @@ class JarvisMainWindow(QMainWindow):
         self.command_input.clear()
         self._append_message("User", user_text)
 
-        formatted_history = self._build_gemini_history()
-
         # Build prompt context from memory service
         system_context = self.memory_service.build_context_for_prompt(user_text)
 
         self._set_busy(True)
         self._idle_timer.stop()
         self.ai_state_changed.emit("thinking")
-        self.ai_status_label.setText("AI Engine: Generating Response...")
+        self.ai_status_label.setText("AI Engine: Analyzing Intent...")
 
         try:
-            response_text = await asyncio.to_thread(
-                self.ai_provider.send_message, formatted_history, model_name, system_context
+            intent_data = await asyncio.to_thread(
+                self.ai_provider.understand_intent, user_text, model_name, system_context
             )
+
+            response_text = intent_data.get("response_text", "")
+            intent_type = intent_data.get("intent_type", "general_chat")
+            params = intent_data.get("parameters", {})
+            requires_confirm = intent_data.get("requires_confirmation", False)
+
+            # Handle intent execution with confirmation
+            if intent_type == "launch_app" and "app_id" in params:
+                app_id = params["app_id"]
+                if requires_confirm:
+                    reply = QMessageBox.question(
+                        self,
+                        "Confirm Application Launch",
+                        f"S.E.N.T.I.A.L. wants to launch '{app_id}'. Do you approve?",
+                        QMessageBox.Yes | QMessageBox.No,
+                        QMessageBox.No,
+                    )
+                    if reply == QMessageBox.Yes:
+                        act_res = self.automation_service.launch_app(app_id, user_confirmed=True)
+                        response_text += f"\n[{act_res.message}]"
+                    else:
+                        response_text += "\n[Action cancelled by user]"
+                else:
+                    act_res = self.automation_service.launch_app(app_id, user_confirmed=True)
+                    response_text += f"\n[{act_res.message}]"
+
+            elif intent_type == "create_task" and "title" in params:
+                task_title = params["title"]
+                if requires_confirm:
+                    reply = QMessageBox.question(
+                        self,
+                        "Confirm Task Creation",
+                        f"Create task '{task_title}'?",
+                        QMessageBox.Yes | QMessageBox.No,
+                        QMessageBox.No,
+                    )
+                    if reply == QMessageBox.Yes:
+                        task = self.task_service.create_task(
+                            title=task_title,
+                            description=params.get("description", ""),
+                            priority=params.get("priority", "MEDIUM").upper(),
+                            due_date=params.get("due_date"),
+                        )
+                        response_text += f"\n[Task #{task.id} created successfully]"
+                    else:
+                        response_text += "\n[Task creation cancelled]"
+
             self._handle_gemini_response(response_text)
 
             # Speak response via voice manager if enabled

@@ -31,7 +31,7 @@ from qasync import asyncSlot
 
 from ai_core_visualization import AICoreVisualization
 from automation_service import WindowsAutomationService
-from config import APP_DIR, get_config_value, load_config, save_config
+from config import APP_DIR, get_config_value, get_secret, load_config, save_config, set_secret
 from gemini_api import DEFAULT_MODEL, SUPPORTED_MODELS, GeminiAIProvider
 from gmail_service import GmailService
 from gui_components import LiquidGlassBackground, LiquidGlassCard
@@ -426,9 +426,11 @@ class JarvisMainWindow(QMainWindow):
         voice_layout.addWidget(QLabel("<h3 style='color: #00C8FF; margin: 0;'>Voice Engine Configuration</h3>"))
         voice_row = QHBoxLayout()
         self.voice_combo = QComboBox()
-        self.voice_combo.addItems(["Disabled", "Windows SAPI (Native TTS)"])
+        self.voice_combo.addItems(["Disabled", "ElevenLabs TTS (Voice Clone)", "Windows SAPI (Native TTS)"])
         current_voice = get_config_value("voice_provider", "disabled")
-        if current_voice == "windows_sapi":
+        if current_voice == "elevenlabs":
+            self.voice_combo.setCurrentText("ElevenLabs TTS (Voice Clone)")
+        elif current_voice == "windows_sapi":
             self.voice_combo.setCurrentText("Windows SAPI (Native TTS)")
         else:
             self.voice_combo.setCurrentText("Disabled")
@@ -440,7 +442,35 @@ class JarvisMainWindow(QMainWindow):
         test_voice_btn.setCursor(Qt.PointingHandCursor)
         test_voice_btn.clicked.connect(self._test_voice)
         voice_row.addWidget(test_voice_btn, stretch=1)
+
+        stop_voice_btn = QPushButton("⏹ Stop Audio")
+        stop_voice_btn.setFixedHeight(36)
+        stop_voice_btn.setCursor(Qt.PointingHandCursor)
+        stop_voice_btn.clicked.connect(self.voice_manager.stop)
+        voice_row.addWidget(stop_voice_btn, stretch=1)
         voice_layout.addLayout(voice_row)
+
+        voice_layout.addWidget(QLabel("ElevenLabs API Key:"))
+        self.elevenlabs_key_input = QLineEdit()
+        self.elevenlabs_key_input.setEchoMode(QLineEdit.Password)
+        self.elevenlabs_key_input.setPlaceholderText("Enter ElevenLabs API Key...")
+        existing_el_key = get_secret("elevenlabs_api_key")
+        if existing_el_key:
+            self.elevenlabs_key_input.setText(MASKED_KEY)
+        voice_layout.addWidget(self.elevenlabs_key_input)
+
+        voice_layout.addWidget(QLabel("ElevenLabs Voice ID:"))
+        self.elevenlabs_voice_id_input = QLineEdit()
+        self.elevenlabs_voice_id_input.setPlaceholderText("Enter ElevenLabs Voice ID (e.g. 21m00Tcm4TlvDq8ikWAM)...")
+        existing_voice_id = get_secret("elevenlabs_voice_id") or get_config_value("elevenlabs_voice_id", "")
+        self.elevenlabs_voice_id_input.setText(existing_voice_id)
+        voice_layout.addWidget(self.elevenlabs_voice_id_input)
+
+        save_voice_settings_btn = QPushButton("Save Voice Configuration")
+        save_voice_settings_btn.setFixedHeight(36)
+        save_voice_settings_btn.setCursor(Qt.PointingHandCursor)
+        save_voice_settings_btn.clicked.connect(self._save_elevenlabs_credentials)
+        voice_layout.addWidget(save_voice_settings_btn)
 
         self.voice_status_lbl = QLabel(f"Voice Status: {self.voice_manager.get_status()}")
         self.voice_status_lbl.setStyleSheet("color: #A0AEC0; font-size: 11px;")
@@ -476,9 +506,30 @@ class JarvisMainWindow(QMainWindow):
 
     def _on_voice_provider_changed(self):
         text = self.voice_combo.currentText()
-        provider_type = "windows_sapi" if "Windows SAPI" in text else "disabled"
+        if "ElevenLabs" in text:
+            provider_type = "elevenlabs"
+        elif "Windows SAPI" in text:
+            provider_type = "windows_sapi"
+        else:
+            provider_type = "disabled"
         self.voice_manager.set_provider_type(provider_type)
         self.voice_status_lbl.setText(f"Voice Status: {self.voice_manager.get_status()}")
+
+    def _save_elevenlabs_credentials(self):
+        key = self.elevenlabs_key_input.text().strip()
+        voice_id = self.elevenlabs_voice_id_input.text().strip()
+
+        if key and key != MASKED_KEY:
+            set_secret("elevenlabs_api_key", key)
+            self.elevenlabs_key_input.setText(MASKED_KEY)
+
+        if voice_id:
+            set_secret("elevenlabs_voice_id", voice_id)
+            save_config({"elevenlabs_voice_id": voice_id})
+
+        self.voice_manager.reload_provider()
+        self.voice_status_lbl.setText(f"Voice Status: {self.voice_manager.get_status()}")
+        show_info_message("Voice Settings Saved", "ElevenLabs TTS credentials and Voice ID updated successfully.")
 
     def _test_voice(self):
         if not self.voice_manager.is_available():

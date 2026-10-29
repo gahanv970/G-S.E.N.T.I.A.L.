@@ -36,6 +36,7 @@ from gemini_api import DEFAULT_MODEL, SUPPORTED_MODELS, GeminiAIProvider
 from gmail_service import GmailService
 from gui_components import LiquidGlassBackground, LiquidGlassCard
 from memory_service import MemoryService
+from microphone_service import MicrophoneService, transcribe_audio_bytes
 from task_service import TaskService
 from ui_views import (
     AutomationManagementWidget,
@@ -72,6 +73,7 @@ class JarvisMainWindow(QMainWindow):
         self.gmail_service = GmailService()
         self.automation_service = WindowsAutomationService()
         self.voice_manager = VoiceManager()
+        self.mic_service = MicrophoneService(self)
 
         self.conversation_history = []  # list of (role, text) tuples, role in {"User", "JARVIS"}
         self._busy = False
@@ -336,6 +338,13 @@ class JarvisMainWindow(QMainWindow):
         input_layout = QHBoxLayout(input_panel)
         input_layout.setContentsMargins(0, 0, 0, 0)
         input_layout.setSpacing(10)
+
+        self.mic_button = QPushButton("🎤")
+        self.mic_button.setFixedSize(42, 42)
+        self.mic_button.setCursor(Qt.PointingHandCursor)
+        self.mic_button.setToolTip("Click to start/stop voice recording")
+        self.mic_button.clicked.connect(self._toggle_microphone_recording)
+        input_layout.addWidget(self.mic_button)
 
         self.command_input = QLineEdit(self.chat_view)
         self.command_input.setPlaceholderText("Ask JARVIS or type a command...")
@@ -609,6 +618,55 @@ class JarvisMainWindow(QMainWindow):
         finally:
             self.save_key_button.setEnabled(True)
             self.ai_state_changed.emit("idle")
+
+    # ------------------------------------------------------------------ Voice Recording Slot
+
+    @asyncSlot()
+    async def _toggle_microphone_recording(self):
+        """Starts or stops push-to-talk voice recording and routes transcription to intent pipeline."""
+        if self._busy:
+            return
+
+        if self.mic_service.is_recording():
+            # Stop recording and transcribe
+            self.mic_button.setText("🎤")
+            self.mic_button.setStyleSheet("")
+            self.ai_status_label.setText("AI Engine: Transcribing Audio...")
+            self.ai_state_changed.emit("thinking")
+
+            wav_bytes = self.mic_service.stop_recording()
+            if not wav_bytes or len(wav_bytes) < 200:
+                self.ai_status_label.setText("AI Engine: No Audio Captured")
+                self.ai_state_changed.emit("idle")
+                return
+
+            try:
+                transcript = await asyncio.to_thread(
+                    transcribe_audio_bytes, wav_bytes, self.ai_provider
+                )
+                if transcript:
+                    logger.info(f"Speech Recognized: {transcript}")
+                    self.command_input.setText(transcript)
+                    await self._send_command()
+                else:
+                    show_info_message("Voice Input", "No speech detected in audio recording.")
+                    self.ai_status_label.setText("AI Engine: Online & Ready")
+                    self.ai_state_changed.emit("idle")
+            except Exception as e:
+                show_error_message("Speech Recognition Error", str(e))
+                self.ai_status_label.setText("AI Engine: Error")
+                self.ai_state_changed.emit("error")
+        else:
+            if not self.mic_service.has_microphone():
+                show_error_message("Microphone Missing", "No microphone input device detected on your system.")
+                return
+
+            started = self.mic_service.start_recording()
+            if started:
+                self.mic_button.setText("🔴")
+                self.mic_button.setStyleSheet("background-color: rgba(255, 68, 68, 120); border: 1px solid #FF4444;")
+                self.ai_status_label.setText("AI Engine: Recording Voice... Click 🔴 to Stop")
+                self.ai_state_changed.emit("speaking")
 
     # ------------------------------------------------------------------ Chat Slot
 

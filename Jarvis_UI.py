@@ -709,7 +709,7 @@ class JarvisMainWindow(QMainWindow):
             params = intent_data.get("parameters", {})
             requires_confirm = intent_data.get("requires_confirmation", False)
 
-            # Handle intent execution with confirmation
+            # Handle intent execution with confirmation and clean spoken feedback
             if intent_type == "launch_app" and "app_id" in params:
                 app_id = params["app_id"]
                 if requires_confirm:
@@ -724,7 +724,7 @@ class JarvisMainWindow(QMainWindow):
                         act_res = self.automation_service.launch_app(app_id, user_confirmed=True)
                         response_text += f"\n[{act_res.message}]"
                     else:
-                        response_text += "\n[Action cancelled by user]"
+                        response_text = f"Action cancelled. Launching {app_id} was declined."
                 else:
                     act_res = self.automation_service.launch_app(app_id, user_confirmed=True)
                     response_text += f"\n[{act_res.message}]"
@@ -748,7 +748,7 @@ class JarvisMainWindow(QMainWindow):
                         )
                         response_text += f"\n[Task #{task.id} created successfully]"
                     else:
-                        response_text += "\n[Task creation cancelled]"
+                        response_text = f"Task creation cancelled for '{task_title}'."
 
             self._handle_gemini_response(response_text)
 
@@ -773,6 +773,7 @@ class JarvisMainWindow(QMainWindow):
         self._busy = busy
         self.send_button.setEnabled(not busy)
         self.command_input.setEnabled(not busy)
+        self.mic_button.setEnabled(not busy)
         if not busy:
             self.command_input.setFocus()
 

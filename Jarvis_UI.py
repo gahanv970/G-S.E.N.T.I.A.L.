@@ -43,7 +43,9 @@ from ui_views import (
     EmailManagementWidget,
     MemoryManagementWidget,
     TaskManagementWidget,
+    WhatsAppCompanionWidget,
 )
+from whatsapp_service import WhatsAppService
 from utils import show_error_message, show_info_message
 from voice_service import VoiceManager
 
@@ -71,6 +73,7 @@ class JarvisMainWindow(QMainWindow):
         self.task_service = TaskService()
         self.memory_service = MemoryService()
         self.gmail_service = GmailService()
+        self.whatsapp_service = WhatsAppService()
         self.automation_service = WindowsAutomationService()
         self.voice_manager = VoiceManager()
         self.mic_service = MicrophoneService(self)
@@ -118,10 +121,11 @@ class JarvisMainWindow(QMainWindow):
         nav_items = [
             ("💬 Chat", 0),
             ("📧 Email", 1),
-            ("⚡ Automation", 2),
-            ("📋 Tasks", 3),
-            ("🧠 Memory", 4),
-            ("⚙️ Settings", 5),
+            ("📱 WhatsApp", 2),
+            ("⚡ Automation", 3),
+            ("📋 Tasks", 4),
+            ("🧠 Memory", 5),
+            ("⚙️ Settings", 6),
         ]
 
         for text, index in nav_items:
@@ -155,19 +159,23 @@ class JarvisMainWindow(QMainWindow):
         self.email_view = EmailManagementWidget(self.gmail_service, self.content_area)
         self.stacked_widget.addWidget(self.email_view)
 
-        # 2: Windows Automation View
+        # 2: WhatsApp Personal Companion View
+        self.whatsapp_view = WhatsAppCompanionWidget(self.whatsapp_service, self.content_area)
+        self.stacked_widget.addWidget(self.whatsapp_view)
+
+        # 3: Windows Automation View
         self.automation_view = AutomationManagementWidget(self.automation_service, self.content_area)
         self.stacked_widget.addWidget(self.automation_view)
 
-        # 3: Task Management View
+        # 4: Task Management View
         self.task_view = TaskManagementWidget(self.task_service, self.content_area)
         self.stacked_widget.addWidget(self.task_view)
 
-        # 4: Memory & Personalization View
+        # 5: Memory & Personalization View
         self.memory_view = MemoryManagementWidget(self.memory_service, self.content_area)
         self.stacked_widget.addWidget(self.memory_view)
 
-        # 5: Settings View
+        # 6: Settings View
         self._setup_settings_view()
         self.stacked_widget.addWidget(self.settings_view)
 
@@ -258,11 +266,13 @@ class JarvisMainWindow(QMainWindow):
         if index == 1:
             self.email_view.update_auth_status()
         elif index == 2:
+            self.whatsapp_view.refresh_all()
+        elif index == 3:
             self.automation_view.refresh_system_status()
             self.automation_view.refresh_audit_log()
-        elif index == 3:
-            self.task_view.refresh_tasks()
         elif index == 4:
+            self.task_view.refresh_tasks()
+        elif index == 5:
             self.memory_view.refresh_memories()
 
     def _update_sidebar_styles(self, active_index):

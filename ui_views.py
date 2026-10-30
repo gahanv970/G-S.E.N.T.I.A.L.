@@ -36,6 +36,7 @@ from qasync import asyncSlot
 
 from automation_service import APPROVED_APPS, PRESET_WORKFLOWS, WindowsAutomationService
 from gmail_service import EmailDetail, EmailSummary, GmailService, generate_reply_draft, summarize_and_classify_email
+from whatsapp_service import ImportantContact, WhatsAppMessage, WhatsAppService
 from gui_components import LiquidGlassCard
 from memory_service import MemoryService
 from task_service import Task, TaskService
@@ -1138,7 +1139,339 @@ class EmailManagementWidget(QWidget):
 
 
 # ----------------------------------------------------------------------
-# 4. WINDOWS AUTOMATION WIDGET
+# 4. WHATSAPP PERSONAL COMPANION WIDGET
+# ----------------------------------------------------------------------
+
+class WhatsAppCompanionWidget(QWidget):
+    """
+    Dedicated view for WhatsApp Personal Companion Mode:
+    Important contacts priorities, manual message import/paste, AI summarization,
+    urgency classification, AI reply drafting, and one-click copy to clipboard.
+    """
+
+    def __init__(self, whatsapp_service: WhatsAppService, parent=None):
+        super().__init__(parent)
+        self.whatsapp_service = whatsapp_service
+        self._setup_ui()
+        self.refresh_contacts()
+        self.refresh_history()
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(12)
+
+        # Header Card
+        header_card = LiquidGlassCard(self, corner_radius=18)
+        header_layout = QHBoxLayout(header_card)
+        header_layout.setContentsMargins(18, 12, 18, 12)
+
+        title_box = QVBoxLayout()
+        title = QLabel("<h2 style='color: #25D366; margin: 0;'>WhatsApp Personal Companion</h2>")
+        desc = QLabel("AI assistant for personal WhatsApp Desktop workflows (Manual Import & Clipboard Assistant)")
+        desc.setStyleSheet("color: #A0AEC0; font-size: 13px;")
+        title_box.addWidget(title)
+        title_box.addWidget(desc)
+        header_layout.addLayout(title_box)
+
+        header_layout.addStretch()
+
+        self.toggle_chk = QCheckBox("Enable Companion Mode")
+        self.toggle_chk.setChecked(self.whatsapp_service.is_enabled())
+        self.toggle_chk.toggled.connect(self._on_toggle_companion)
+        header_layout.addWidget(self.toggle_chk)
+
+        layout.addWidget(header_card)
+
+        # Main Splitter: Left = Contacts & Paste Import, Right = History & AI Reply
+        splitter = QSplitter(Qt.Horizontal, self)
+
+        # Left Container
+        left_container = QWidget()
+        left_layout = QVBoxLayout(left_container)
+        left_layout.setContentsMargins(0, 0, 5, 0)
+        left_layout.setSpacing(10)
+
+        # 1. Important Contacts Card
+        contacts_card = LiquidGlassCard(left_container, corner_radius=16)
+        c_layout = QVBoxLayout(contacts_card)
+        c_layout.setContentsMargins(14, 12, 14, 12)
+        c_layout.addWidget(QLabel("<b style='color: #25D366;'>Important Contacts & Priority Groups</b>"))
+
+        add_row = QHBoxLayout()
+        self.contact_name_in = QLineEdit()
+        self.contact_name_in.setPlaceholderText("Contact name...")
+        self.contact_name_in.setFixedHeight(32)
+        add_row.addWidget(self.contact_name_in, stretch=2)
+
+        self.contact_pri_combo = QComboBox()
+        self.contact_pri_combo.addItems(["HIGH", "CRITICAL", "MEDIUM", "LOW"])
+        self.contact_pri_combo.setFixedHeight(32)
+        add_row.addWidget(self.contact_pri_combo, stretch=1)
+
+        add_contact_btn = QPushButton("➕ Add")
+        add_contact_btn.setFixedHeight(32)
+        add_contact_btn.setCursor(Qt.PointingHandCursor)
+        add_contact_btn.clicked.connect(self._add_contact)
+        add_row.addWidget(add_contact_btn)
+        c_layout.addLayout(add_row)
+
+        self.contacts_scroll = QScrollArea()
+        self.contacts_scroll.setWidgetResizable(True)
+        self.contacts_container = QWidget()
+        self.contacts_list_layout = QVBoxLayout(self.contacts_container)
+        self.contacts_list_layout.setContentsMargins(0, 0, 0, 0)
+        self.contacts_list_layout.setSpacing(4)
+        self.contacts_scroll.setWidget(self.contacts_container)
+        self.contacts_scroll.setFixedHeight(120)
+        c_layout.addWidget(self.contacts_scroll)
+
+        left_layout.addWidget(contacts_card)
+
+        # 2. Paste / Import Message Card
+        import_card = LiquidGlassCard(left_container, corner_radius=16)
+        i_layout = QVBoxLayout(import_card)
+        i_layout.setContentsMargins(14, 12, 14, 12)
+        i_layout.setSpacing(8)
+        i_layout.addWidget(QLabel("<b style='color: #7FFFD4;'>Import Message / Paste Notification</b>"))
+
+        self.sender_in = QLineEdit()
+        self.sender_in.setPlaceholderText("Sender name or phone number...")
+        self.sender_in.setFixedHeight(34)
+        i_layout.addWidget(self.sender_in)
+
+        self.msg_text_in = QTextEdit()
+        self.msg_text_in.setPlaceholderText("Paste WhatsApp message content here...")
+        self.msg_text_in.setFixedHeight(110)
+        i_layout.addWidget(self.msg_text_in)
+
+        analyze_btn = QPushButton("⚡ Analyze & Summarize Message")
+        analyze_btn.setFixedHeight(36)
+        analyze_btn.setCursor(Qt.PointingHandCursor)
+        analyze_btn.setStyleSheet("background-color: rgba(37, 211, 102, 60); font-weight: bold;")
+        analyze_btn.clicked.connect(self._analyze_imported_message)
+        i_layout.addWidget(analyze_btn)
+
+        left_layout.addWidget(import_card, stretch=1)
+        splitter.addWidget(left_container)
+
+        # Right Container: Analyzed History & AI Reply Generation
+        right_container = LiquidGlassCard(self, corner_radius=18)
+        right_layout = QVBoxLayout(right_container)
+        right_layout.setContentsMargins(16, 12, 16, 12)
+        right_layout.setSpacing(8)
+
+        right_top = QHBoxLayout()
+        right_top.addWidget(QLabel("<b style='color: #00C8FF; font-size: 14px;'>Analyzed Message History & AI Replies</b>"), stretch=1)
+
+        clear_hist_btn = QPushButton("🗑️ Clear History")
+        clear_hist_btn.setFixedHeight(28)
+        clear_hist_btn.setCursor(Qt.PointingHandCursor)
+        clear_hist_btn.setStyleSheet("color: #FF6B6B;")
+        clear_hist_btn.clicked.connect(self._clear_history)
+        right_top.addWidget(clear_hist_btn)
+        right_layout.addLayout(right_top)
+
+        self.history_scroll = QScrollArea()
+        self.history_scroll.setWidgetResizable(True)
+        self.history_container = QWidget()
+        self.history_list_layout = QVBoxLayout(self.history_container)
+        self.history_list_layout.setContentsMargins(0, 0, 0, 0)
+        self.history_list_layout.setSpacing(8)
+        self.history_list_layout.addStretch()
+        self.history_scroll.setWidget(self.history_container)
+        right_layout.addWidget(self.history_scroll, stretch=1)
+
+        splitter.addWidget(right_container)
+        splitter.setSizes([450, 550])
+        layout.addWidget(splitter, stretch=1)
+
+    def _on_toggle_companion(self, checked: bool):
+        self.whatsapp_service.set_enabled(checked)
+        show_info_message("WhatsApp Companion", f"WhatsApp Personal Companion Mode is now {'enabled' if checked else 'disabled'}.")
+
+    def _add_contact(self):
+        name = self.contact_name_in.text().strip()
+        pri = self.contact_pri_combo.currentText()
+        if not name:
+            show_error_message("Validation Error", "Contact name cannot be blank.")
+            return
+
+        try:
+            self.whatsapp_service.add_contact(name, priority=pri)
+            self.contact_name_in.clear()
+            self.refresh_contacts()
+        except Exception as e:
+            show_error_message("Error", str(e))
+
+    def refresh_all(self):
+        """Refreshes both contacts and message history lists."""
+        self.refresh_contacts()
+        self.refresh_history()
+
+    def refresh_contacts(self):
+        while self.contacts_list_layout.count() > 0:
+            child = self.contacts_list_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+
+        contacts = self.whatsapp_service.get_contacts()
+        if not contacts:
+            empty = QLabel("<span style='color: #718096; font-size: 11px;'>No important contacts added.</span>")
+            self.contacts_list_layout.addWidget(empty)
+            return
+
+        for c in contacts:
+            row = QWidget()
+            r_layout = QHBoxLayout(row)
+            r_layout.setContentsMargins(4, 2, 4, 2)
+
+            lbl = QLabel(f"<b>{c.name}</b>")
+            lbl.setStyleSheet("color: #F0F4F8; font-size: 12px;")
+            r_layout.addWidget(lbl, stretch=1)
+
+            pri_colors = {"CRITICAL": "#FF4444", "HIGH": "#FFAA00", "MEDIUM": "#00C8FF", "LOW": "#888888"}
+            p_col = pri_colors.get(c.priority, "#00C8FF")
+            badge = QLabel(f" {c.priority} ")
+            badge.setStyleSheet(f"color: {p_col}; border: 1px solid {p_col}; border-radius: 4px; font-size: 10px; font-weight: bold;")
+            r_layout.addWidget(badge)
+
+            del_btn = QPushButton("❌")
+            del_btn.setFixedSize(22, 22)
+            del_btn.setCursor(Qt.PointingHandCursor)
+            del_btn.clicked.connect(lambda _, cname=c.name: self._remove_contact(cname))
+            r_layout.addWidget(del_btn)
+
+            self.contacts_list_layout.addWidget(row)
+
+    def _remove_contact(self, name: str):
+        self.whatsapp_service.remove_contact(name)
+        self.refresh_contacts()
+
+    @asyncSlot()
+    async def _analyze_imported_message(self):
+        sender = self.sender_in.text().strip() or "Unknown Contact"
+        text = self.msg_text_in.toPlainText().strip()
+        if not text:
+            show_error_message("Validation Error", "Message content cannot be empty.")
+            return
+
+        try:
+            ai_prov = getattr(self.window(), "ai_provider", None)
+            msg = await asyncio.to_thread(
+                self.whatsapp_service.import_and_analyze_message, sender, text, ai_prov
+            )
+            self.sender_in.clear()
+            self.msg_text_in.clear()
+            self.refresh_history()
+            show_info_message("Message Analyzed", f"WhatsApp message from '{msg.sender}' analyzed (Urgency: {msg.urgency.upper()}).")
+        except Exception as e:
+            show_error_message("Analysis Error", str(e))
+
+    def refresh_history(self):
+        while self.history_list_layout.count() > 1:
+            child = self.history_list_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+
+        history = self.whatsapp_service.get_history()
+        if not history:
+            empty = QLabel("<p style='color: #718096; text-align: center; margin: 30px;'>No message history imported.</p>")
+            empty.setAlignment(Qt.AlignCenter)
+            self.history_list_layout.insertWidget(0, empty)
+            return
+
+        for msg in history:
+            card = self._create_message_card(msg)
+            self.history_list_layout.insertWidget(self.history_list_layout.count() - 1, card)
+
+    def _create_message_card(self, msg: WhatsAppMessage) -> QWidget:
+        card = LiquidGlassCard(self.history_container, corner_radius=12)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(6)
+
+        top = QHBoxLayout()
+        sender_lbl = QLabel(f"<b style='color: #25D366;'>{msg.sender}</b>")
+        time_lbl = QLabel(msg.timestamp)
+        time_lbl.setStyleSheet("color: #718096; font-size: 11px;")
+        top.addWidget(sender_lbl, stretch=1)
+        top.addWidget(time_lbl)
+
+        u_cols = {"critical": "#FF4444", "high": "#FFAA00", "medium": "#00C8FF", "low": "#7FFFD4"}
+        u_col = u_cols.get(msg.urgency, "#7FFFD4")
+        u_badge = QLabel(f" {msg.urgency.upper()} ")
+        u_badge.setStyleSheet(f"color: {u_col}; border: 1px solid {u_col}; border-radius: 4px; font-size: 10px; font-weight: bold;")
+        top.addWidget(u_badge)
+        layout.addLayout(top)
+
+        txt_lbl = QLabel(f"<span style='color: #E2E8F0; font-size: 12px;'>{msg.message_text}</span>")
+        txt_lbl.setWordWrap(True)
+        layout.addWidget(txt_lbl)
+
+        sum_lbl = QLabel(f"<i style='color: #A0AEC0; font-size: 11px;'>AI Summary: {msg.summary}</i>")
+        sum_lbl.setWordWrap(True)
+        layout.addWidget(sum_lbl)
+
+        reply_box = QVBoxLayout()
+        if msg.suggested_reply:
+            r_lbl = QLabel(f"<b>Suggested Reply:</b> {msg.suggested_reply}")
+            r_lbl.setStyleSheet("background: rgba(37, 211, 102, 20); padding: 6px; border-radius: 6px; color: #7FFFD4; font-size: 11px;")
+            r_lbl.setWordWrap(True)
+            reply_box.addWidget(r_lbl)
+
+        btn_row = QHBoxLayout()
+        gen_reply_btn = QPushButton("✍️ AI Generate Reply")
+        gen_reply_btn.setFixedHeight(28)
+        gen_reply_btn.setCursor(Qt.PointingHandCursor)
+        gen_reply_btn.clicked.connect(lambda _, m=msg: self._generate_reply_action(m))
+        btn_row.addWidget(gen_reply_btn)
+
+        if msg.suggested_reply:
+            copy_btn = QPushButton("📋 Copy Reply to Clipboard")
+            copy_btn.setFixedHeight(28)
+            copy_btn.setCursor(Qt.PointingHandCursor)
+            copy_btn.setStyleSheet("background-color: rgba(0, 200, 255, 50); font-weight: bold;")
+            copy_btn.clicked.connect(lambda _, r=msg.suggested_reply: self._copy_reply_action(r))
+            btn_row.addWidget(copy_btn)
+
+        reply_box.addLayout(btn_row)
+        layout.addLayout(reply_box)
+
+        return card
+
+    @asyncSlot()
+    async def _generate_reply_action(self, msg: WhatsAppMessage):
+        try:
+            ai_prov = getattr(self.window(), "ai_provider", None)
+            reply_text = await asyncio.to_thread(
+                self.whatsapp_service.generate_suggested_reply, msg, ai_prov
+            )
+            self.refresh_history()
+            show_info_message("Reply Generated", f"AI Suggested Reply generated for '{msg.sender}'. Click 'Copy Reply to Clipboard' to paste into WhatsApp Desktop.")
+        except Exception as e:
+            show_error_message("Reply Generation Error", str(e))
+
+    def _copy_reply_action(self, text: str):
+        ok = self.whatsapp_service.copy_reply_to_clipboard(text)
+        if ok:
+            show_info_message("Clipboard", "Reply text copied to Windows clipboard! Ready to paste into WhatsApp Desktop.")
+
+    def _clear_history(self):
+        reply = QMessageBox.question(
+            self,
+            "Clear History",
+            "Are you sure you want to clear all imported WhatsApp message history?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply == QMessageBox.Yes:
+            self.whatsapp_service.clear_history()
+            self.refresh_history()
+
+
+# ----------------------------------------------------------------------
+# 5. WINDOWS AUTOMATION WIDGET
 # ----------------------------------------------------------------------
 
 class AutomationManagementWidget(QWidget):

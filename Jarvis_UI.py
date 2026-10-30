@@ -40,6 +40,7 @@ from memory_service import MemoryService
 from microphone_service import MicrophoneService, transcribe_audio_bytes
 from task_service import TaskService
 from alert_service import AlertNotificationService
+from workflow_engine import WorkflowEngine
 from ui_views import (
     AutomationManagementWidget,
     EmailManagementWidget,
@@ -47,6 +48,7 @@ from ui_views import (
     NotificationCenterWidget,
     TaskManagementWidget,
     WhatsAppCompanionWidget,
+    WorkflowOrchestrationWidget,
 )
 from whatsapp_service import WhatsAppNotificationListener, WhatsAppService
 from utils import show_error_message, show_info_message
@@ -83,6 +85,16 @@ class JarvisMainWindow(QMainWindow):
         )
         self.automation_service = WindowsAutomationService()
         self.browser_service = BrowserAutomationService()
+        self.workflow_engine = WorkflowEngine(
+            automation_service=self.automation_service,
+            browser_service=self.browser_service,
+            gmail_service=self.gmail_service,
+            whatsapp_service=self.whatsapp_service,
+            alert_service=self.alert_service,
+            task_service=self.task_service,
+            ai_provider=self.ai_provider,
+            parent=self,
+        )
         self.voice_manager = VoiceManager()
         self.mic_service = MicrophoneService(self)
 
@@ -129,12 +141,13 @@ class JarvisMainWindow(QMainWindow):
         nav_items = [
             ("💬 Chat", 0),
             ("🔔 Alerts", 1),
-            ("📧 Email", 2),
-            ("📱 WhatsApp", 3),
-            ("⚡ Automation", 4),
-            ("📋 Tasks", 5),
-            ("🧠 Memory", 6),
-            ("⚙️ Settings", 7),
+            ("⚡ Workflows", 2),
+            ("📧 Email", 3),
+            ("📱 WhatsApp", 4),
+            ("⚙️ Automation", 5),
+            ("📋 Tasks", 6),
+            ("🧠 Memory", 7),
+            ("⚙️ Settings", 8),
         ]
 
         for text, index in nav_items:
@@ -168,11 +181,15 @@ class JarvisMainWindow(QMainWindow):
         self.alert_view = NotificationCenterWidget(self.alert_service, self.content_area)
         self.stacked_widget.addWidget(self.alert_view)
 
-        # 2: Email View
+        # 2: Intelligent Workflow Orchestration View
+        self.workflow_view = WorkflowOrchestrationWidget(self.workflow_engine, self.content_area)
+        self.stacked_widget.addWidget(self.workflow_view)
+
+        # 3: Email View
         self.email_view = EmailManagementWidget(self.gmail_service, self.content_area)
         self.stacked_widget.addWidget(self.email_view)
 
-        # 3: WhatsApp Personal Companion View
+        # 4: WhatsApp Personal Companion View
         self.whatsapp_view = WhatsAppCompanionWidget(
             self.whatsapp_service,
             notification_listener=self.whatsapp_listener,
@@ -180,7 +197,7 @@ class JarvisMainWindow(QMainWindow):
         )
         self.stacked_widget.addWidget(self.whatsapp_view)
 
-        # 4: Windows & Browser Automation View
+        # 5: Windows & Browser Automation View
         self.automation_view = AutomationManagementWidget(
             self.automation_service,
             browser_service=self.browser_service,
@@ -188,15 +205,15 @@ class JarvisMainWindow(QMainWindow):
         )
         self.stacked_widget.addWidget(self.automation_view)
 
-        # 5: Task Management View
+        # 6: Task Management View
         self.task_view = TaskManagementWidget(self.task_service, self.content_area)
         self.stacked_widget.addWidget(self.task_view)
 
-        # 6: Memory & Personalization View
+        # 7: Memory & Personalization View
         self.memory_view = MemoryManagementWidget(self.memory_service, self.content_area)
         self.stacked_widget.addWidget(self.memory_view)
 
-        # 7: Settings View
+        # 8: Settings View
         self._setup_settings_view()
         self.stacked_widget.addWidget(self.settings_view)
 
@@ -287,15 +304,17 @@ class JarvisMainWindow(QMainWindow):
         if index == 1:
             self.alert_view.refresh_alerts()
         elif index == 2:
-            self.email_view.update_auth_status()
+            self.workflow_view.refresh_presets()
         elif index == 3:
-            self.whatsapp_view.refresh_all()
+            self.email_view.update_auth_status()
         elif index == 4:
+            self.whatsapp_view.refresh_all()
+        elif index == 5:
             self.automation_view.refresh_system_status()
             self.automation_view.refresh_audit_log()
-        elif index == 5:
-            self.task_view.refresh_tasks()
         elif index == 6:
+            self.task_view.refresh_tasks()
+        elif index == 7:
             self.memory_view.refresh_memories()
 
     def _update_sidebar_styles(self, active_index):

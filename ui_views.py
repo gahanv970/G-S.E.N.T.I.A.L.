@@ -36,6 +36,7 @@ from qasync import asyncSlot
 
 from automation_service import APPROVED_APPS, PRESET_WORKFLOWS, WindowsAutomationService
 from browser_service import BrowserAutomationService
+from workflow_engine import Workflow, WorkflowEngine, WorkflowStep
 from gmail_service import EmailDetail, EmailSummary, GmailService, generate_reply_draft, summarize_and_classify_email
 from alert_service import AlertNotification, AlertNotificationService
 from whatsapp_service import ImportantContact, WhatsAppMessage, WhatsAppNotificationListener, WhatsAppService
@@ -1896,7 +1897,285 @@ class WhatsAppCompanionWidget(QWidget):
 
 
 # ----------------------------------------------------------------------
-# 5. WINDOWS AUTOMATION WIDGET
+# 5. INTELLIGENT WORKFLOW ORCHESTRATION WIDGET
+# ----------------------------------------------------------------------
+
+class WorkflowOrchestrationWidget(QWidget):
+    """
+    Dedicated view for Intelligent Workflow Orchestration.
+    Displays preset/custom workflows, step-by-step plans, execution progress,
+    pause/resume/cancel controls, and execution history log.
+    """
+
+    def __init__(self, workflow_engine: WorkflowEngine, parent=None):
+        super().__init__(parent)
+        self.workflow_engine = workflow_engine
+        self._setup_ui()
+        self._connect_engine_signals()
+        self.refresh_presets()
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(12)
+
+        # Header Card
+        header_card = LiquidGlassCard(self, corner_radius=18)
+        header_layout = QHBoxLayout(header_card)
+        header_layout.setContentsMargins(18, 12, 18, 12)
+
+        title_box = QVBoxLayout()
+        title = QLabel("<h2 style='color: #00C8FF; margin: 0;'>Intelligent Workflow Orchestration</h2>")
+        desc = QLabel("Combine desktop automation, browser navigation, AI, email, and WhatsApp into structured multi-step workflows")
+        desc.setStyleSheet("color: #A0AEC0; font-size: 13px;")
+        title_box.addWidget(title)
+        title_box.addWidget(desc)
+        header_layout.addLayout(title_box)
+
+        header_layout.addStretch()
+
+        self.wf_status_badge = QLabel(" IDLE ")
+        self.wf_status_badge.setStyleSheet("background: rgba(0, 200, 255, 30); color: #00C8FF; border: 1px solid #00C8FF; border-radius: 6px; font-weight: bold; padding: 4px 10px;")
+        header_layout.addWidget(self.wf_status_badge)
+
+        layout.addWidget(header_card)
+
+        # Main Splitter: Left = Presets & Controls, Right = Active Step Plan & Execution Log
+        splitter = QSplitter(Qt.Horizontal, self)
+
+        # Left: Presets Card
+        left_card = LiquidGlassCard(self, corner_radius=16)
+        left_layout = QVBoxLayout(left_card)
+        left_layout.setContentsMargins(16, 12, 16, 12)
+        left_layout.setSpacing(10)
+
+        left_layout.addWidget(QLabel("<b style='color: #25D366; font-size: 14px;'>Preset Multi-Step Workflows</b>"))
+
+        self.preset_combo = QComboBox()
+        self.preset_combo.setFixedHeight(34)
+        left_layout.addWidget(self.preset_combo)
+
+        self.preset_desc_lbl = QLabel("Select a preset workflow to inspect its plan.")
+        self.preset_desc_lbl.setStyleSheet("color: #A0AEC0; font-size: 11px;")
+        self.preset_desc_lbl.setWordWrap(True)
+        left_layout.addWidget(self.preset_desc_lbl)
+
+        ctrl_row = QHBoxLayout()
+        self.start_btn = QPushButton("▶ Run Workflow")
+        self.start_btn.setFixedHeight(36)
+        self.start_btn.setCursor(Qt.PointingHandCursor)
+        self.start_btn.setStyleSheet("background-color: rgba(0, 200, 255, 60); font-weight: bold;")
+        self.start_btn.clicked.connect(self._run_selected_preset)
+        ctrl_row.addWidget(self.start_btn)
+
+        self.pause_btn = QPushButton("⏸ Pause")
+        self.pause_btn.setFixedHeight(36)
+        self.pause_btn.setCursor(Qt.PointingHandCursor)
+        self.pause_btn.setEnabled(False)
+        self.pause_btn.clicked.connect(self._toggle_pause_resume)
+        ctrl_row.addWidget(self.pause_btn)
+
+        self.cancel_btn = QPushButton("⏹ Cancel")
+        self.cancel_btn.setFixedHeight(36)
+        self.cancel_btn.setCursor(Qt.PointingHandCursor)
+        self.cancel_btn.setEnabled(False)
+        self.cancel_btn.setStyleSheet("color: #FF6B6B;")
+        self.cancel_btn.clicked.connect(self._cancel_workflow_action)
+        ctrl_row.addWidget(self.cancel_btn)
+
+        left_layout.addLayout(ctrl_row)
+        left_layout.addStretch()
+        splitter.addWidget(left_card)
+
+        # Right: Active Workflow Steps & Log
+        right_card = LiquidGlassCard(self, corner_radius=16)
+        right_layout = QVBoxLayout(right_card)
+        right_layout.setContentsMargins(16, 12, 16, 12)
+        right_layout.setSpacing(8)
+
+        right_layout.addWidget(QLabel("<b style='color: #7FFFD4; font-size: 14px;'>Planned Steps & Progress Log</b>"))
+
+        self.steps_scroll = QScrollArea()
+        self.steps_scroll.setWidgetResizable(True)
+        self.steps_container = QWidget()
+        self.steps_list_layout = QVBoxLayout(self.steps_container)
+        self.steps_list_layout.setContentsMargins(0, 0, 0, 0)
+        self.steps_list_layout.setSpacing(6)
+        self.steps_list_layout.addStretch()
+        self.steps_scroll.setWidget(self.steps_container)
+        right_layout.addWidget(self.steps_scroll, stretch=1)
+
+        right_layout.addWidget(QLabel("<b style='color: #A0AEC0;'>Workflow Execution Output</b>"))
+        self.wf_output_log = QTextEdit()
+        self.wf_output_log.setReadOnly(True)
+        self.wf_output_log.setFixedHeight(120)
+        self.wf_output_log.setStyleSheet("background-color: rgba(10, 15, 30, 200); font-family: Consolas; font-size: 11px;")
+        right_layout.addWidget(self.wf_output_log)
+
+        splitter.addWidget(right_card)
+        splitter.setSizes([420, 580])
+        layout.addWidget(splitter, stretch=1)
+
+    def _connect_engine_signals(self):
+        self.workflow_engine.workflow_started.connect(self._on_wf_started)
+        self.workflow_engine.step_started.connect(self._on_step_started)
+        self.workflow_engine.step_completed.connect(self._on_step_completed)
+        self.workflow_engine.step_confirmation_required.connect(self._on_step_confirmation_required)
+        self.workflow_engine.workflow_completed.connect(self._on_wf_completed)
+        self.workflow_engine.workflow_failed.connect(self._on_wf_failed)
+        self.workflow_engine.workflow_paused.connect(self._on_wf_paused)
+        self.workflow_engine.workflow_resumed.connect(self._on_wf_resumed)
+        self.workflow_engine.workflow_cancelled.connect(self._on_wf_cancelled)
+
+    def refresh_presets(self):
+        self.preset_combo.clear()
+        self._preset_map = {wf.id: wf for wf in self.workflow_engine.get_preset_workflows()}
+        for wf_id, wf in self._preset_map.items():
+            self.preset_combo.addItem(wf.title, userData=wf_id)
+
+        self.preset_combo.currentIndexChanged.connect(self._on_preset_changed)
+        self._on_preset_changed()
+
+    def _on_preset_changed(self):
+        wf_id = self.preset_combo.currentData()
+        if wf_id in self._preset_map:
+            wf = self._preset_map[wf_id]
+            self.preset_desc_lbl.setText(wf.description)
+            self._render_workflow_steps(wf)
+
+    def _render_workflow_steps(self, wf: Workflow):
+        while self.steps_list_layout.count() > 1:
+            child = self.steps_list_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+
+        for i, step in enumerate(wf.steps):
+            row = LiquidGlassCard(self.steps_container, corner_radius=10)
+            r_layout = QHBoxLayout(row)
+            r_layout.setContentsMargins(10, 8, 10, 8)
+
+            idx_lbl = QLabel(f"<b>#{i+1}</b>")
+            idx_lbl.setStyleSheet("color: #00C8FF; font-size: 12px;")
+            r_layout.addWidget(idx_lbl)
+
+            act_lbl = QLabel(f"[{step.action_type}]")
+            act_lbl.setStyleSheet("color: #7FFFD4; font-size: 11px;")
+            r_layout.addWidget(act_lbl)
+
+            desc_lbl = QLabel(step.description)
+            desc_lbl.setStyleSheet("color: #F0F4F8; font-size: 12px;")
+            r_layout.addWidget(desc_lbl, stretch=1)
+
+            s_cols = {
+                "completed": "#7FFFD4",
+                "running": "#00C8FF",
+                "failed": "#FF4444",
+                "cancelled": "#FF6B6B",
+                "awaiting_confirmation": "#FFAA00",
+                "pending": "#718096",
+            }
+            scol = s_cols.get(step.status, "#718096")
+            badge = QLabel(f" {step.status.upper()} ")
+            badge.setStyleSheet(f"color: {scol}; border: 1px solid {scol}; border-radius: 4px; font-size: 10px; font-weight: bold;")
+            r_layout.addWidget(badge)
+
+            self.steps_list_layout.insertWidget(self.steps_list_layout.count() - 1, row)
+
+    def _run_selected_preset(self):
+        wf_id = self.preset_combo.currentData()
+        if wf_id in self._preset_map:
+            wf = self._preset_map[wf_id]
+            ok = self.workflow_engine.start_workflow(wf)
+            if not ok:
+                show_error_message("Workflow Engine", "Could not start workflow.")
+
+    def _toggle_pause_resume(self):
+        active = self.workflow_engine.get_active_workflow()
+        if not active:
+            return
+
+        if active.status == "running":
+            self.workflow_engine.pause_workflow(active.id)
+        elif active.status == "paused":
+            self.workflow_engine.resume_workflow(active.id)
+
+    def _cancel_workflow_action(self):
+        active = self.workflow_engine.get_active_workflow()
+        if active:
+            self.workflow_engine.cancel_workflow(active.id)
+
+    # Signal slots
+    def _on_wf_started(self, wf_id: str):
+        self.wf_status_badge.setText(" RUNNING ")
+        self.wf_status_badge.setStyleSheet("background: rgba(0, 200, 255, 40); color: #00C8FF; border: 1px solid #00C8FF; border-radius: 6px; font-weight: bold; padding: 4px 10px;")
+        self.start_btn.setEnabled(False)
+        self.pause_btn.setEnabled(True)
+        self.cancel_btn.setEnabled(True)
+        self.wf_output_log.append(f"[{datetime.now().strftime('%H:%M:%S')}] Started workflow '{wf_id}'")
+
+    def _on_step_started(self, wf_id: str, step_idx: int, desc: str):
+        self.wf_output_log.append(f"[{datetime.now().strftime('%H:%M:%S')}] Step #{step_idx+1} running: {desc}")
+        active = self.workflow_engine.get_active_workflow()
+        if active:
+            self._render_workflow_steps(active)
+
+    def _on_step_completed(self, wf_id: str, step_idx: int, result_msg: str):
+        self.wf_output_log.append(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Step #{step_idx+1} completed: {result_msg}")
+        active = self.workflow_engine.get_active_workflow()
+        if active:
+            self._render_workflow_steps(active)
+
+    def _on_step_confirmation_required(self, wf_id: str, step_idx: int, prompt_msg: str):
+        self.wf_output_log.append(f"[{datetime.now().strftime('%H:%M:%S')}] ⚠️ Confirmation required for step #{step_idx+1}")
+        active = self.workflow_engine.get_active_workflow()
+        if active:
+            self._render_workflow_steps(active)
+
+        reply = QMessageBox.question(
+            self,
+            "Workflow Confirmation Required",
+            f"{prompt_msg}\n\nDo you approve execution of this step?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        self.workflow_engine.confirm_step_and_continue(wf_id, step_idx, approved=(reply == QMessageBox.Yes))
+
+    def _on_wf_completed(self, wf_id: str, final_msg: str):
+        self.wf_status_badge.setText(" COMPLETED ")
+        self.wf_status_badge.setStyleSheet("background: rgba(127, 255, 212, 40); color: #7FFFD4; border: 1px solid #7FFFD4; border-radius: 6px; font-weight: bold; padding: 4px 10px;")
+        self.start_btn.setEnabled(True)
+        self.pause_btn.setEnabled(False)
+        self.cancel_btn.setEnabled(False)
+        self.wf_output_log.append(f"[{datetime.now().strftime('%H:%M:%S')}] 🎉 {final_msg}")
+
+    def _on_wf_failed(self, wf_id: str, err_msg: str):
+        self.wf_status_badge.setText(" FAILED ")
+        self.wf_status_badge.setStyleSheet("background: rgba(255, 68, 68, 40); color: #FF4444; border: 1px solid #FF4444; border-radius: 6px; font-weight: bold; padding: 4px 10px;")
+        self.start_btn.setEnabled(True)
+        self.pause_btn.setEnabled(False)
+        self.cancel_btn.setEnabled(False)
+        self.wf_output_log.append(f"[{datetime.now().strftime('%H:%M:%S')}] ❌ {err_msg}")
+
+    def _on_wf_paused(self, wf_id: str):
+        self.wf_status_badge.setText(" PAUSED ")
+        self.wf_status_badge.setStyleSheet("background: rgba(255, 170, 0, 40); color: #FFAA00; border: 1px solid #FFAA00; border-radius: 6px; font-weight: bold; padding: 4px 10px;")
+        self.pause_btn.setText("▶ Resume")
+
+    def _on_wf_resumed(self, wf_id: str):
+        self.wf_status_badge.setText(" RUNNING ")
+        self.wf_status_badge.setStyleSheet("background: rgba(0, 200, 255, 40); color: #00C8FF; border: 1px solid #00C8FF; border-radius: 6px; font-weight: bold; padding: 4px 10px;")
+        self.pause_btn.setText("⏸ Pause")
+
+    def _on_wf_cancelled(self, wf_id: str):
+        self.wf_status_badge.setText(" CANCELLED ")
+        self.wf_status_badge.setStyleSheet("background: rgba(255, 107, 107, 40); color: #FF6B6B; border: 1px solid #FF6B6B; border-radius: 6px; font-weight: bold; padding: 4px 10px;")
+        self.start_btn.setEnabled(True)
+        self.pause_btn.setEnabled(False)
+        self.cancel_btn.setEnabled(False)
+
+
+# ----------------------------------------------------------------------
+# 6. WINDOWS AUTOMATION WIDGET
 # ----------------------------------------------------------------------
 
 class AutomationManagementWidget(QWidget):

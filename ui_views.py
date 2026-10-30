@@ -1217,29 +1217,53 @@ class WhatsAppCompanionWidget(QWidget):
         left_layout.setContentsMargins(0, 0, 5, 0)
         left_layout.setSpacing(10)
 
-        # 1. Important Contacts Card
+        # 1. Smart Contact Intelligence Card
         contacts_card = LiquidGlassCard(left_container, corner_radius=16)
         c_layout = QVBoxLayout(contacts_card)
         c_layout.setContentsMargins(14, 12, 14, 12)
-        c_layout.addWidget(QLabel("<b style='color: #25D366;'>Important Contacts & Priority Groups</b>"))
+        c_layout.setSpacing(8)
 
-        add_row = QHBoxLayout()
+        c_top = QHBoxLayout()
+        c_top.addWidget(QLabel("<b style='color: #25D366;'>Smart Contact Intelligence & Priorities</b>"), stretch=1)
+        reset_contacts_btn = QPushButton("🔄 Reset Defaults")
+        reset_contacts_btn.setFixedHeight(26)
+        reset_contacts_btn.setCursor(Qt.PointingHandCursor)
+        reset_contacts_btn.clicked.connect(self._reset_contacts_action)
+        c_top.addWidget(reset_contacts_btn)
+        c_layout.addLayout(c_top)
+
+        add_row1 = QHBoxLayout()
         self.contact_name_in = QLineEdit()
-        self.contact_name_in.setPlaceholderText("Contact name...")
+        self.contact_name_in.setPlaceholderText("Contact name or phone...")
         self.contact_name_in.setFixedHeight(32)
-        add_row.addWidget(self.contact_name_in, stretch=2)
+        add_row1.addWidget(self.contact_name_in, stretch=2)
 
         self.contact_pri_combo = QComboBox()
-        self.contact_pri_combo.addItems(["HIGH", "CRITICAL", "MEDIUM", "LOW"])
+        self.contact_pri_combo.addItems(["HIGH", "CRITICAL", "NORMAL", "LOW"])
         self.contact_pri_combo.setFixedHeight(32)
-        add_row.addWidget(self.contact_pri_combo, stretch=1)
+        add_row1.addWidget(self.contact_pri_combo, stretch=1)
 
-        add_contact_btn = QPushButton("➕ Add")
+        self.contact_cat_combo = QComboBox()
+        self.contact_cat_combo.addItems(["Work", "Family", "VIP", "General"])
+        self.contact_cat_combo.setFixedHeight(32)
+        add_row1.addWidget(self.contact_cat_combo, stretch=1)
+        c_layout.addLayout(add_row1)
+
+        add_row2 = QHBoxLayout()
+        self.contact_trusted_chk = QCheckBox("⭐ Trusted Contact")
+        add_row2.addWidget(self.contact_trusted_chk)
+
+        self.contact_notes_in = QLineEdit()
+        self.contact_notes_in.setPlaceholderText("Optional notes...")
+        self.contact_notes_in.setFixedHeight(30)
+        add_row2.addWidget(self.contact_notes_in, stretch=1)
+
+        add_contact_btn = QPushButton("➕ Add Contact")
         add_contact_btn.setFixedHeight(32)
         add_contact_btn.setCursor(Qt.PointingHandCursor)
         add_contact_btn.clicked.connect(self._add_contact)
-        add_row.addWidget(add_contact_btn)
-        c_layout.addLayout(add_row)
+        add_row2.addWidget(add_contact_btn)
+        c_layout.addLayout(add_row2)
 
         self.contacts_scroll = QScrollArea()
         self.contacts_scroll.setWidgetResizable(True)
@@ -1248,7 +1272,7 @@ class WhatsAppCompanionWidget(QWidget):
         self.contacts_list_layout.setContentsMargins(0, 0, 0, 0)
         self.contacts_list_layout.setSpacing(4)
         self.contacts_scroll.setWidget(self.contacts_container)
-        self.contacts_scroll.setFixedHeight(120)
+        self.contacts_scroll.setFixedHeight(140)
         c_layout.addWidget(self.contacts_scroll)
 
         left_layout.addWidget(contacts_card)
@@ -1350,16 +1374,40 @@ class WhatsAppCompanionWidget(QWidget):
     def _add_contact(self):
         name = self.contact_name_in.text().strip()
         pri = self.contact_pri_combo.currentText()
+        cat = self.contact_cat_combo.currentText()
+        trusted = self.contact_trusted_chk.isChecked()
+        notes = self.contact_notes_in.text().strip()
+
         if not name:
             show_error_message("Validation Error", "Contact name cannot be blank.")
             return
 
         try:
-            self.whatsapp_service.add_contact(name, priority=pri)
+            self.whatsapp_service.add_contact(
+                name=name,
+                priority=pri,
+                category=cat,
+                trusted=trusted,
+                custom_notes=notes,
+            )
             self.contact_name_in.clear()
+            self.contact_notes_in.clear()
+            self.contact_trusted_chk.setChecked(False)
             self.refresh_contacts()
         except Exception as e:
             show_error_message("Error", str(e))
+
+    def _reset_contacts_action(self):
+        reply = QMessageBox.question(
+            self,
+            "Reset Contacts",
+            "Reset all WhatsApp contacts to default preferences?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply == QMessageBox.Yes:
+            self.whatsapp_service.reset_default_contacts()
+            self.refresh_contacts()
 
     def refresh_all(self):
         """Refreshes both contacts and message history lists."""
@@ -1374,7 +1422,7 @@ class WhatsAppCompanionWidget(QWidget):
 
         contacts = self.whatsapp_service.get_contacts()
         if not contacts:
-            empty = QLabel("<span style='color: #718096; font-size: 11px;'>No important contacts added.</span>")
+            empty = QLabel("<span style='color: #718096; font-size: 11px;'>No contacts configured.</span>")
             self.contacts_list_layout.addWidget(empty)
             return
 
@@ -1382,24 +1430,85 @@ class WhatsAppCompanionWidget(QWidget):
             row = QWidget()
             r_layout = QHBoxLayout(row)
             r_layout.setContentsMargins(4, 2, 4, 2)
+            r_layout.setSpacing(6)
 
-            lbl = QLabel(f"<b>{c.name}</b>")
+            star = "⭐ " if c.trusted else ""
+            lbl = QLabel(f"<b>{star}{c.name}</b> <span style='color: #A0AEC0; font-size: 10px;'>[{c.category}]</span>")
             lbl.setStyleSheet("color: #F0F4F8; font-size: 12px;")
             r_layout.addWidget(lbl, stretch=1)
 
-            pri_colors = {"CRITICAL": "#FF4444", "HIGH": "#FFAA00", "MEDIUM": "#00C8FF", "LOW": "#888888"}
+            pri_colors = {"CRITICAL": "#FF4444", "HIGH": "#FFAA00", "NORMAL": "#00C8FF", "LOW": "#888888"}
             p_col = pri_colors.get(c.priority, "#00C8FF")
             badge = QLabel(f" {c.priority} ")
             badge.setStyleSheet(f"color: {p_col}; border: 1px solid {p_col}; border-radius: 4px; font-size: 10px; font-weight: bold;")
             r_layout.addWidget(badge)
 
+            edit_btn = QPushButton("✏️")
+            edit_btn.setFixedSize(24, 24)
+            edit_btn.setCursor(Qt.PointingHandCursor)
+            edit_btn.setToolTip("Edit Contact")
+            edit_btn.clicked.connect(lambda _, contact=c: self._edit_contact_dialog(contact))
+            r_layout.addWidget(edit_btn)
+
             del_btn = QPushButton("❌")
-            del_btn.setFixedSize(22, 22)
+            del_btn.setFixedSize(24, 24)
             del_btn.setCursor(Qt.PointingHandCursor)
+            del_btn.setToolTip("Remove Contact")
             del_btn.clicked.connect(lambda _, cname=c.name: self._remove_contact(cname))
             r_layout.addWidget(del_btn)
 
             self.contacts_list_layout.addWidget(row)
+
+    def _edit_contact_dialog(self, contact: ImportantContact):
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"Edit Contact: {contact.name}")
+        dlg.setFixedWidth(360)
+        d_layout = QVBoxLayout(dlg)
+        d_layout.setSpacing(10)
+
+        d_layout.addWidget(QLabel(f"<b>Contact:</b> {contact.name}"))
+
+        d_layout.addWidget(QLabel("Priority Level:"))
+        pri_combo = QComboBox()
+        pri_combo.addItems(["CRITICAL", "HIGH", "NORMAL", "LOW"])
+        pri_combo.setCurrentText(contact.priority)
+        d_layout.addWidget(pri_combo)
+
+        d_layout.addWidget(QLabel("Category:"))
+        cat_combo = QComboBox()
+        cat_combo.addItems(["Work", "Family", "VIP", "General"])
+        cat_combo.setCurrentText(contact.category)
+        d_layout.addWidget(cat_combo)
+
+        trusted_chk = QCheckBox("⭐ Trusted Contact")
+        trusted_chk.setChecked(contact.trusted)
+        d_layout.addWidget(trusted_chk)
+
+        d_layout.addWidget(QLabel("Custom Notes:"))
+        notes_in = QLineEdit(contact.custom_notes)
+        d_layout.addWidget(notes_in)
+
+        btn_row = QHBoxLayout()
+        save_btn = QPushButton("Save Changes")
+        save_btn.clicked.connect(dlg.accept)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(dlg.reject)
+        btn_row.addWidget(save_btn)
+        btn_row.addWidget(cancel_btn)
+        d_layout.addLayout(btn_row)
+
+        if dlg.exec() == QDialog.Accepted:
+            try:
+                self.whatsapp_service.update_contact(
+                    name=contact.name,
+                    priority=pri_combo.currentText(),
+                    category=cat_combo.currentText(),
+                    trusted=trusted_chk.isChecked(),
+                    custom_notes=notes_in.text().strip(),
+                )
+                self.refresh_contacts()
+            except Exception as e:
+                show_error_message("Edit Error", str(e))
 
     def _remove_contact(self, name: str):
         self.whatsapp_service.remove_contact(name)

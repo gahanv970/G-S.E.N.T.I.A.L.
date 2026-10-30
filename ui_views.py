@@ -35,7 +35,7 @@ from PySide6.QtWidgets import (
 from qasync import asyncSlot
 
 from automation_service import APPROVED_APPS, PRESET_WORKFLOWS, WindowsAutomationService
-from gmail_service import EmailDetail, EmailSummary, GmailService
+from gmail_service import EmailDetail, EmailSummary, GmailService, generate_reply_draft, summarize_and_classify_email
 from gui_components import LiquidGlassCard
 from memory_service import MemoryService
 from task_service import Task, TaskService
@@ -876,9 +876,73 @@ class EmailManagementWidget(QWidget):
                 body_view.setPlainText(detail.body_text)
             d_layout.addWidget(body_view)
 
+            # AI Summary Display Box
+            summary_display = QLabel()
+            summary_display.setStyleSheet("background: rgba(0, 200, 255, 20); border: 1px solid rgba(0, 200, 255, 60); padding: 10px; border-radius: 8px; color: #E2E8F0; font-size: 12px;")
+            summary_display.setWordWrap(True)
+            summary_display.hide()
+            d_layout.addWidget(summary_display)
+
+            # AI Action Buttons Row
+            ai_btn_row = QHBoxLayout()
+
+            summarize_btn = QPushButton("✨ AI Summarize & Classify")
+            summarize_btn.setFixedHeight(34)
+            summarize_btn.setCursor(Qt.PointingHandCursor)
+
+            reply_draft_btn = QPushButton("✍️ AI Generate Reply Draft")
+            reply_draft_btn.setFixedHeight(34)
+            reply_draft_btn.setCursor(Qt.PointingHandCursor)
+
+            ai_btn_row.addWidget(summarize_btn)
+            ai_btn_row.addWidget(reply_draft_btn)
+            d_layout.addLayout(ai_btn_row)
+
             close_btn = QPushButton("Close")
             close_btn.clicked.connect(dlg.accept)
             d_layout.addWidget(close_btn)
+
+            async def _on_summarize():
+                summarize_btn.setEnabled(False)
+                summary_display.setText("AI is analyzing and summarizing email...")
+                summary_display.show()
+                try:
+                    ai_prov = getattr(self.window(), "ai_provider", None)
+                    res = await asyncio.to_thread(summarize_and_classify_email, detail, ai_prov)
+                    urgency_colors = {
+                        "critical": "#FF4444",
+                        "high": "#FFAA00",
+                        "medium": "#00C8FF",
+                        "low": "#7FFFD4",
+                    }
+                    u_col = urgency_colors.get(res.get("urgency", "low"), "#7FFFD4")
+                    text = (
+                        f"<b>AI Urgency Rating:</b> <span style='color:{u_col}; font-weight:bold;'>{res['urgency'].upper()}</span><br>"
+                        f"<b>AI Summary:</b> {res['summary']}"
+                    )
+                    summary_display.setText(text)
+                except Exception as ex:
+                    summary_display.setText(f"AI Summarization Error: {ex}")
+                finally:
+                    summarize_btn.setEnabled(True)
+
+            async def _on_generate_reply():
+                reply_draft_btn.setEnabled(False)
+                try:
+                    ai_prov = getattr(self.window(), "ai_provider", None)
+                    res = await asyncio.to_thread(generate_reply_draft, detail, ai_prov)
+                    self.to_input.setText(detail.sender)
+                    self.subject_input.setText(res.get("subject", f"Re: {detail.subject}"))
+                    self.body_input.setText(res.get("body", ""))
+                    dlg.accept()
+                    show_info_message("Reply Draft Generated", "Proposed reply draft populated in Compose tab for your review.")
+                except Exception as ex:
+                    show_error_message("Draft Error", str(ex))
+                finally:
+                    reply_draft_btn.setEnabled(True)
+
+            summarize_btn.clicked.connect(lambda: asyncio.create_task(_on_summarize()))
+            reply_draft_btn.clicked.connect(lambda: asyncio.create_task(_on_generate_reply()))
 
             dlg.exec()
         except Exception as e:

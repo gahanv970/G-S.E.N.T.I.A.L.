@@ -604,13 +604,16 @@ class MemoryManagementWidget(QWidget):
 class EmailManagementWidget(QWidget):
     """
     Dedicated view for Gmail integration:
-    OAuth authorization, mailbox inbox, message viewing, draft composing,
+    OAuth authorization, mailbox inbox, pagination, message viewing, draft composing,
     and user-confirmed message dispatching.
     """
 
     def __init__(self, gmail_service: GmailService, parent=None):
         super().__init__(parent)
         self.gmail_service = gmail_service
+        self._current_page_token: Optional[str] = None
+        self._next_page_token: Optional[str] = None
+        self._page_tokens_history: List[Optional[str]] = []
         self._setup_ui()
         self.update_auth_status()
 
@@ -682,6 +685,24 @@ class EmailManagementWidget(QWidget):
         self.mail_list_layout.addStretch()
         self.mail_scroll.setWidget(self.mail_list_container)
         left_layout.addWidget(self.mail_scroll)
+
+        # Pagination controls bar
+        page_bar = QHBoxLayout()
+        self.prev_page_btn = QPushButton("◀ Previous Page")
+        self.prev_page_btn.setFixedHeight(30)
+        self.prev_page_btn.setEnabled(False)
+        self.prev_page_btn.setCursor(Qt.PointingHandCursor)
+        self.prev_page_btn.clicked.connect(self._load_prev_page)
+
+        self.next_page_btn = QPushButton("Next Page ▶")
+        self.next_page_btn.setFixedHeight(30)
+        self.next_page_btn.setEnabled(False)
+        self.next_page_btn.setCursor(Qt.PointingHandCursor)
+        self.next_page_btn.clicked.connect(self._load_next_page)
+
+        page_bar.addWidget(self.prev_page_btn)
+        page_bar.addWidget(self.next_page_btn)
+        left_layout.addLayout(page_bar)
 
         splitter.addWidget(left_container)
 
@@ -787,7 +808,7 @@ class EmailManagementWidget(QWidget):
         dlg.exec()
 
     @asyncSlot()
-    async def _load_mailbox(self):
+    async def _load_mailbox(self, page_token: Optional[str] = None):
         if not self.gmail_service.is_authenticated():
             return
 
@@ -801,8 +822,14 @@ class EmailManagementWidget(QWidget):
 
         q = self.email_search_input.text().strip() or None
         try:
-            summaries, _ = await asyncio.to_thread(self.gmail_service.list_messages, query=q)
+            summaries, next_token = await asyncio.to_thread(
+                self.gmail_service.list_messages, query=q, page_token=page_token
+            )
             loading.deleteLater()
+
+            self._next_page_token = next_token
+            self.next_page_btn.setEnabled(bool(next_token))
+            self.prev_page_btn.setEnabled(len(self._page_tokens_history) > 0)
 
             if not summaries:
                 empty = QLabel("<p style='color: #718096; text-align: center; margin: 30px;'>No messages found.</p>")
@@ -816,6 +843,20 @@ class EmailManagementWidget(QWidget):
         except Exception as e:
             loading.deleteLater()
             show_error_message("Mailbox Error", f"Failed to retrieve emails: {e}")
+
+    @asyncSlot()
+    async def _load_next_page(self):
+        if self._next_page_token:
+            self._page_tokens_history.append(self._current_page_token)
+            self._current_page_token = self._next_page_token
+            await self._load_mailbox(page_token=self._current_page_token)
+
+    @asyncSlot()
+    async def _load_prev_page(self):
+        if self._page_tokens_history:
+            prev_token = self._page_tokens_history.pop()
+            self._current_page_token = prev_token
+            await self._load_mailbox(page_token=self._current_page_token)
 
     def _create_email_summary_widget(self, s: EmailSummary) -> QWidget:
         card = LiquidGlassCard(self.mail_list_container, corner_radius=12)
@@ -941,8 +982,8 @@ class EmailManagementWidget(QWidget):
                 finally:
                     reply_draft_btn.setEnabled(True)
 
-            summarize_btn.clicked.connect(lambda: asyncio.create_task(_on_summarize()))
-            reply_draft_btn.clicked.connect(lambda: asyncio.create_task(_on_generate_reply()))
+            summarize_btn.clicked.connect(lambda *_: asyncio.create_task(_on_summarize()))
+            reply_draft_btn.clicked.connect(lambda *_: asyncio.create_task(_on_generate_reply()))
 
             dlg.exec()
         except Exception as e:

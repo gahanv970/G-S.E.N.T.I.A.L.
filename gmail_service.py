@@ -21,7 +21,7 @@ from googleapiclient.errors import HttpError
 import json
 import re
 
-from config import APP_DIR, get_config_value, save_config
+from config import APP_DIR, delete_secret, get_config_value, get_secret, save_config, set_secret
 
 logger = logging.getLogger(__name__)
 
@@ -95,42 +95,54 @@ class GmailService:
         self._load_stored_credentials()
 
     def _load_stored_credentials(self) -> None:
-        """Loads and refreshes saved credentials from token file if present."""
-        if not self.token_path.exists():
+        """Loads and refreshes saved credentials from OS Keyring or fallback file."""
+        token_json = get_secret("gmail_oauth_token")
+
+        if not token_json and self.token_path.exists():
+            try:
+                with open(self.token_path, "r", encoding="utf-8") as f:
+                    token_json = f.read()
+            except Exception as e:
+                logger.debug(f"Could not read fallback token file: {e}")
+
+        if not token_json:
             return
 
         try:
-            self._creds = Credentials.from_authorized_user_file(
-                str(self.token_path), GMAIL_SCOPES
-            )
+            token_data = json.loads(token_json)
+            self._creds = Credentials.from_authorized_user_info(token_data, GMAIL_SCOPES)
+
             if self._creds and self._creds.expired and self._creds.refresh_token:
                 try:
                     self._creds.refresh(Request())
                     self._save_token()
-                    logger.info("Gmail OAuth access token refreshed.")
+                    logger.info("Gmail OAuth access token refreshed successfully.")
                 except Exception as e:
-                    logger.warning(f"Could not refresh Gmail token: {e}")
-                    self._creds = None
+                    logger.warning(f"Could not refresh Gmail token (revoked or expired): {e}")
+                    self.disconnect()
+                    return
 
             if self._creds and self._creds.valid:
                 self._service = build("gmail", "v1", credentials=self._creds)
-                logger.info("Gmail API service initialized successfully from token.")
+                logger.info("Gmail API service initialized successfully.")
         except Exception as e:
-            logger.error(f"Error loading Gmail credentials from {self.token_path}: {e}")
-            self._creds = None
-            self._service = None
+            logger.error(f"Error loading Gmail credentials: {e}")
+            self.disconnect()
 
     def _save_token(self) -> None:
-        """Persists current credentials to token file."""
+        """Persists current credentials securely into OS Keyring and fallback file."""
         if not self._creds:
             return
         try:
+            token_json = self._creds.to_json()
+            set_secret("gmail_oauth_token", token_json)
+
             self.token_path.parent.mkdir(parents=True, exist_ok=True)
             with open(self.token_path, "w", encoding="utf-8") as f:
-                f.write(self._creds.to_json())
-            logger.info(f"Gmail token saved to {self.token_path}")
+                f.write(token_json)
+            logger.info("Gmail OAuth token saved securely.")
         except Exception as e:
-            logger.error(f"Failed to save token to {self.token_path}: {e}")
+            logger.error(f"Failed to save Gmail token: {e}")
 
     def is_authenticated(self) -> bool:
         """Returns True if the Gmail client is authorized and valid."""
@@ -174,10 +186,11 @@ class GmailService:
             raise RuntimeError(f"Gmail OAuth Error: {e}") from e
 
     def disconnect(self) -> None:
-        """Disconnects account, deletes token, and clears memory state."""
+        """Disconnects account, deletes token from keyring and disk, and clears state."""
         self._creds = None
         self._service = None
         self._user_email = None
+        delete_secret("gmail_oauth_token")
         if self.token_path.exists():
             try:
                 self.token_path.unlink()

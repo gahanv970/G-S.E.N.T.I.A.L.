@@ -5,7 +5,7 @@ Authentication state handling, safety confirmation enforcement, and message pars
 
 from pathlib import Path
 import tempfile
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 import pytest
 
 from gmail_service import (
@@ -182,3 +182,55 @@ def test_ai_email_unconfigured_provider_throws():
     with pytest.raises(RuntimeError) as exc:
         summarize_and_classify_email(email, ai_provider)
     assert "not configured" in str(exc.value)
+
+
+def test_gmail_keyring_token_storage_and_disconnect():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        svc = GmailService(
+            token_path=Path(tmpdir) / "token.json",
+            credentials_path=Path(tmpdir) / "creds.json",
+        )
+
+        mock_creds = MagicMock()
+        mock_creds.to_json.return_value = '{"token": "fake_oauth_token_123"}'
+        mock_creds.valid = True
+        mock_creds.expired = False
+        svc._creds = mock_creds
+
+        with patch("gmail_service.set_secret") as mock_set_secret:
+            svc._save_token()
+            assert mock_set_secret.called
+            assert mock_set_secret.call_args[0][0] == "gmail_oauth_token"
+
+        with patch("gmail_service.delete_secret") as mock_del_secret:
+            svc.disconnect()
+            assert mock_del_secret.called
+            assert not svc.is_authenticated()
+
+
+def test_gmail_list_messages_pagination():
+    svc = GmailService(token_path=Path("dummy"), credentials_path=Path("dummy"))
+
+    mock_service = MagicMock()
+    mock_messages = MagicMock()
+
+    mock_messages.list.return_value.execute.return_value = {
+        "messages": [{"id": "m1"}, {"id": "m2"}],
+        "nextPageToken": "page_token_abc123",
+    }
+    mock_messages.get.return_value.execute.return_value = {
+        "id": "m1",
+        "payload": {"headers": [{"name": "Subject", "value": "Test Subject"}]},
+        "snippet": "Snippet text",
+    }
+
+    mock_service.users.return_value.messages.return_value = mock_messages
+    svc._service = mock_service
+    svc._creds = MagicMock()
+    svc._creds.valid = True
+
+    summaries, next_token = svc.list_messages(page_token="initial_token")
+
+    assert len(summaries) == 2
+    assert next_token == "page_token_abc123"
+    assert mock_messages.list.call_args[1].get("pageToken") == "initial_token"

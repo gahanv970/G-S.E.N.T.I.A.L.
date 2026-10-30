@@ -20,8 +20,13 @@ logger = logging.getLogger(__name__)
 def check_microphone_availability() -> bool:
     """Returns True if a valid audio input device (microphone) is connected."""
     try:
+        from PySide6.QtWidgets import QApplication
+        app = QApplication.instance()
+        if not app:
+            app = QApplication.instance() or QApplication([])
+
         inputs = QMediaDevices.audioInputs()
-        return len(inputs) > 0
+        return bool(inputs and len(inputs) > 0)
     except Exception as e:
         logger.debug(f"Error checking microphone devices: {e}")
         return False

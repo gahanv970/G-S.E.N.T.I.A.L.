@@ -31,6 +31,7 @@ from qasync import asyncSlot
 
 from ai_core_visualization import AICoreVisualization
 from automation_service import WindowsAutomationService
+from browser_service import BrowserAutomationService
 from config import APP_DIR, get_config_value, get_secret, load_config, save_config, set_secret
 from gemini_api import DEFAULT_MODEL, SUPPORTED_MODELS, GeminiAIProvider
 from gmail_service import GmailService
@@ -81,6 +82,7 @@ class JarvisMainWindow(QMainWindow):
             self.whatsapp_service, ai_provider=self.ai_provider, parent=self
         )
         self.automation_service = WindowsAutomationService()
+        self.browser_service = BrowserAutomationService()
         self.voice_manager = VoiceManager()
         self.mic_service = MicrophoneService(self)
 
@@ -178,8 +180,12 @@ class JarvisMainWindow(QMainWindow):
         )
         self.stacked_widget.addWidget(self.whatsapp_view)
 
-        # 4: Windows Automation View
-        self.automation_view = AutomationManagementWidget(self.automation_service, self.content_area)
+        # 4: Windows & Browser Automation View
+        self.automation_view = AutomationManagementWidget(
+            self.automation_service,
+            browser_service=self.browser_service,
+            parent=self.content_area,
+        )
         self.stacked_widget.addWidget(self.automation_view)
 
         # 5: Task Management View
@@ -779,6 +785,26 @@ class JarvisMainWindow(QMainWindow):
                 search_q = params["query"]
                 act_res = self.automation_service.web_search(search_q, user_confirmed=True)
                 response_text += f"\n[{act_res.message}]"
+
+            elif intent_type == "extract_web_text" and "url" in params:
+                target_url = params["url"]
+                if requires_confirm:
+                    reply = QMessageBox.question(
+                        self,
+                        "Confirm Web Text Extraction",
+                        f"S.E.N.T.I.A.L. wants to fetch and extract readable text from '{target_url}'. Do you approve?",
+                        QMessageBox.Yes | QMessageBox.No,
+                        QMessageBox.No,
+                    )
+                    if reply == QMessageBox.Yes:
+                        res = await asyncio.to_thread(self.browser_service.extract_page_text, target_url)
+                        text_prev = res.data.get('extracted_text', '')[:500] if res.data else ""
+                        response_text += f"\n[{res.message}]\nContent Preview:\n{text_prev}"
+                    else:
+                        response_text = f"Action cancelled. Extraction from '{target_url}' was declined."
+                else:
+                    res = await asyncio.to_thread(self.browser_service.extract_page_text, target_url)
+                    response_text += f"\n[{res.message}]"
 
             elif intent_type == "window_management" and "action" in params and "app_id" in params:
                 win_act = params["action"]

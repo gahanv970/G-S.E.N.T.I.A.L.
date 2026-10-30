@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
 from qasync import asyncSlot
 
 from automation_service import APPROVED_APPS, PRESET_WORKFLOWS, WindowsAutomationService
+from browser_service import BrowserAutomationService
 from gmail_service import EmailDetail, EmailSummary, GmailService, generate_reply_draft, summarize_and_classify_email
 from alert_service import AlertNotification, AlertNotificationService
 from whatsapp_service import ImportantContact, WhatsAppMessage, WhatsAppNotificationListener, WhatsAppService
@@ -1900,14 +1901,15 @@ class WhatsAppCompanionWidget(QWidget):
 
 class AutomationManagementWidget(QWidget):
     """
-    Dedicated view for safe Windows automation:
-    Approved applications registry, safe URL launcher, system telemetry,
-    workflows, and execution audit log.
+    Dedicated view for safe Windows & Browser automation:
+    Approved applications registry, safe URL launcher, web text extractor,
+    window controls, system telemetry, workflows, and execution audit log.
     """
 
-    def __init__(self, automation_service: WindowsAutomationService, parent=None):
+    def __init__(self, automation_service: WindowsAutomationService, browser_service: Optional[BrowserAutomationService] = None, parent=None):
         super().__init__(parent)
         self.automation_service = automation_service
+        self.browser_service = browser_service or BrowserAutomationService()
         self._setup_ui()
         self.refresh_system_status()
         self.refresh_audit_log()
@@ -2111,6 +2113,41 @@ class AutomationManagementWidget(QWidget):
 
         layout.addWidget(mid_splitter, stretch=2)
 
+        # Intelligent Browser Automation Card
+        browser_card = LiquidGlassCard(self, corner_radius=16)
+        b_layout = QVBoxLayout(browser_card)
+        b_layout.setContentsMargins(14, 10, 14, 10)
+        b_layout.setSpacing(8)
+
+        b_header = QHBoxLayout()
+        b_header.addWidget(QLabel("<b style='color: #7FFFD4; font-size: 14px;'>Intelligent Browser Automation & Web Text Extractor</b>"), stretch=1)
+        self.browser_master_chk = QCheckBox("Enable Browser Automation")
+        self.browser_master_chk.setChecked(self.browser_service.is_browser_automation_enabled())
+        self.browser_master_chk.toggled.connect(self._on_toggle_browser_automation)
+        b_header.addWidget(self.browser_master_chk)
+        b_layout.addLayout(b_header)
+
+        extract_row = QHBoxLayout()
+        self.extract_url_in = QLineEdit()
+        self.extract_url_in.setPlaceholderText("https://example.com (Extract readable page text)...")
+        self.extract_url_in.setFixedHeight(32)
+        extract_row.addWidget(self.extract_url_in, stretch=3)
+
+        extract_btn = QPushButton("✨ Extract Web Page Text")
+        extract_btn.setFixedHeight(32)
+        extract_btn.setCursor(Qt.PointingHandCursor)
+        extract_btn.clicked.connect(self._extract_web_text_action)
+        extract_row.addWidget(extract_btn, stretch=1)
+        b_layout.addLayout(extract_row)
+
+        self.extracted_display = QTextEdit()
+        self.extracted_display.setReadOnly(True)
+        self.extracted_display.setPlaceholderText("Extracted webpage text preview...")
+        self.extracted_display.setFixedHeight(90)
+        b_layout.addWidget(self.extracted_display)
+
+        layout.addWidget(browser_card)
+
         # Audit Log Card
         audit_card = LiquidGlassCard(self, corner_radius=16)
         audit_layout = QVBoxLayout(audit_card)
@@ -2161,6 +2198,28 @@ class AutomationManagementWidget(QWidget):
     def _on_toggle_master_automation(self, checked: bool):
         self.automation_service.set_automation_enabled(checked)
         show_info_message("Desktop Automation", f"Desktop automation is now {'enabled' if checked else 'disabled'}.")
+
+    def _on_toggle_browser_automation(self, checked: bool):
+        self.browser_service.set_browser_automation_enabled(checked)
+        show_info_message("Browser Automation", f"Browser automation is now {'enabled' if checked else 'disabled'}.")
+
+    @asyncSlot()
+    async def _extract_web_text_action(self):
+        url = self.extract_url_in.text().strip()
+        if not url:
+            show_error_message("Validation Error", "URL cannot be blank.")
+            return
+
+        self.extracted_display.setText("Fetching webpage and extracting readable text...")
+        res = await asyncio.to_thread(self.browser_service.extract_page_text, url)
+        if res.success and res.data:
+            text = res.data.get("extracted_text", "")
+            self.extracted_display.setText(text)
+            show_info_message("Text Extracted", f"Successfully extracted text from {url}")
+        else:
+            self.extracted_display.setText(f"Extraction Error: {res.message}")
+            show_error_message("Extraction Error", res.message)
+        self.refresh_audit_log()
 
     def _open_url_action(self):
         url = self.url_input.text().strip()

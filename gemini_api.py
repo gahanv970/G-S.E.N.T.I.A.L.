@@ -29,6 +29,7 @@ VALID_INTENT_TYPES = {
     "open_url",
     "open_path",
     "web_search",
+    "extract_web_text",
     "window_management",
     "create_task",
     "compose_email",
@@ -74,7 +75,7 @@ def validate_intent_output(data: Dict[str, Any]) -> Dict[str, Any]:
         else:
             requires_confirmation = True
 
-    elif intent_type == "open_url":
+    elif intent_type in ("open_url", "extract_web_text"):
         url = str(params.get("url", "")).strip()
         if ":" in url and not url.lower().startswith(("http://", "https://")):
             intent_type = "general_chat"
@@ -410,7 +411,7 @@ class GeminiAIProvider:
             "Do NOT include markdown block formatting or extra commentary outside the JSON object.\n\n"
             "JSON Schema:\n"
             "{\n"
-            '  "intent_type": "launch_app | open_url | open_path | web_search | window_management | create_task | compose_email | system_status | general_chat",\n'
+            '  "intent_type": "launch_app | open_url | open_path | web_search | extract_web_text | window_management | create_task | compose_email | system_status | general_chat",\n'
             '  "response_text": "Concise natural language answer or action summary",\n'
             '  "parameters": {\n'
             '     "app_id": "notepad | calculator | explorer | paint | taskmgr | cmd",\n'

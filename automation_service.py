@@ -509,6 +509,14 @@ class WindowsAutomationService:
         """
         Executes a registered multi-step workflow.
         """
+        if not self.is_automation_enabled():
+            res = ActionResult(
+                success=False,
+                action="execute_workflow",
+                message="Access Denied: Desktop automation is disabled in settings.",
+            )
+            return self._log_result(res)
+
         clean_id = (workflow_id or "").strip()
         if clean_id not in PRESET_WORKFLOWS:
             res = ActionResult(

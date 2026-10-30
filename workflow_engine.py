@@ -261,6 +261,12 @@ class WorkflowEngine(QObject):
         if not self._active_workflow or self._active_workflow.status != "running":
             return
 
+        if not self.automation_service.is_automation_enabled():
+            self._active_workflow.status = "failed"
+            self.workflow_failed.emit(self._active_workflow.id, "Master desktop automation was disabled during execution.")
+            self._finish_workflow("Workflow halted: Desktop automation disabled in settings.", success=False)
+            return
+
         idx = self._active_workflow.current_step_index
         if idx >= len(self._active_workflow.steps):
             self._finish_workflow("All workflow steps completed successfully.", success=True)

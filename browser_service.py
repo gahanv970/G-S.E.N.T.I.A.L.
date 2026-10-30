@@ -114,7 +114,8 @@ class BrowserAutomationService:
         """
         Validates URL security.
         Restricts navigation to HTTP/HTTPS (HTTPS preferred).
-        Blocks dangerous schemes (file:, javascript:, data:, cmd:).
+        Blocks dangerous schemes (file:, javascript:, data:, cmd:, vbscript:).
+        Blocks private network/localhost IP redirects (127.0.0.1, 10.x, 192.168.x).
         Returns tuple of (valid: bool, sanitized_url: str, error_message: str).
         """
         clean_url = (url or "").strip()
@@ -124,7 +125,7 @@ class BrowserAutomationService:
         # Check prohibited scheme candidates
         if ":" in clean_url:
             candidate_scheme = clean_url.split(":", 1)[0].lower()
-            if candidate_scheme in ("javascript", "file", "data", "cmd", "powershell", "vbscript"):
+            if candidate_scheme not in ("http", "https"):
                 return False, "", f"Security violation: Scheme '{candidate_scheme}:' is strictly prohibited."
 
         if not clean_url.startswith(("http://", "https://")):
@@ -135,8 +136,18 @@ class BrowserAutomationService:
             if parsed.scheme.lower() not in ("http", "https"):
                 return False, "", f"Security violation: Scheme '{parsed.scheme}:' is prohibited. Only HTTP/HTTPS allowed."
 
-            if not parsed.netloc:
+            hostname = (parsed.hostname or "").lower()
+            if not hostname:
                 return False, "", "Invalid URL: Domain/Host cannot be empty."
+
+            # Block private IP / localhost access
+            private_hosts = ["localhost", "127.0.0.1", "0.0.0.0", "::1"]
+            if hostname in private_hosts or hostname.endswith(".local") or hostname.endswith(".internal"):
+                return False, "", f"Security violation: Access to private/local host '{hostname}' is restricted."
+
+            # Private IP range check
+            if re.match(r"^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)", hostname):
+                return False, "", f"Security violation: Access to private IP address '{hostname}' is restricted."
 
             return True, clean_url, "URL validated successfully."
         except Exception as e:

@@ -45,7 +45,7 @@ from ui_views import (
     TaskManagementWidget,
     WhatsAppCompanionWidget,
 )
-from whatsapp_service import WhatsAppService
+from whatsapp_service import WhatsAppNotificationListener, WhatsAppService
 from utils import show_error_message, show_info_message
 from voice_service import VoiceManager
 
@@ -74,6 +74,9 @@ class JarvisMainWindow(QMainWindow):
         self.memory_service = MemoryService()
         self.gmail_service = GmailService()
         self.whatsapp_service = WhatsAppService()
+        self.whatsapp_listener = WhatsAppNotificationListener(
+            self.whatsapp_service, ai_provider=self.ai_provider, parent=self
+        )
         self.automation_service = WindowsAutomationService()
         self.voice_manager = VoiceManager()
         self.mic_service = MicrophoneService(self)
@@ -160,7 +163,11 @@ class JarvisMainWindow(QMainWindow):
         self.stacked_widget.addWidget(self.email_view)
 
         # 2: WhatsApp Personal Companion View
-        self.whatsapp_view = WhatsAppCompanionWidget(self.whatsapp_service, self.content_area)
+        self.whatsapp_view = WhatsAppCompanionWidget(
+            self.whatsapp_service,
+            notification_listener=self.whatsapp_listener,
+            parent=self.content_area,
+        )
         self.stacked_widget.addWidget(self.whatsapp_view)
 
         # 3: Windows Automation View

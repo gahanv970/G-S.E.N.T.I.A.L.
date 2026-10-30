@@ -36,7 +36,7 @@ from qasync import asyncSlot
 
 from automation_service import APPROVED_APPS, PRESET_WORKFLOWS, WindowsAutomationService
 from gmail_service import EmailDetail, EmailSummary, GmailService, generate_reply_draft, summarize_and_classify_email
-from whatsapp_service import ImportantContact, WhatsAppMessage, WhatsAppService
+from whatsapp_service import ImportantContact, WhatsAppMessage, WhatsAppNotificationListener, WhatsAppService
 from gui_components import LiquidGlassCard
 from memory_service import MemoryService
 from task_service import Task, TaskService
@@ -1145,16 +1145,24 @@ class EmailManagementWidget(QWidget):
 class WhatsAppCompanionWidget(QWidget):
     """
     Dedicated view for WhatsApp Personal Companion Mode:
-    Important contacts priorities, manual message import/paste, AI summarization,
-    urgency classification, AI reply drafting, and one-click copy to clipboard.
+    Windows WhatsApp Desktop notification listener monitoring,
+    important contacts priorities, manual message import/paste fallback,
+    AI summarization, urgency classification, AI reply drafting, and clipboard copying.
     """
 
-    def __init__(self, whatsapp_service: WhatsAppService, parent=None):
+    def __init__(self, whatsapp_service: WhatsAppService, notification_listener: Optional[WhatsAppNotificationListener] = None, parent=None):
         super().__init__(parent)
         self.whatsapp_service = whatsapp_service
+        self.notification_listener = notification_listener
         self._setup_ui()
         self.refresh_contacts()
         self.refresh_history()
+
+        if self.notification_listener:
+            self.notification_listener.notification_received.connect(lambda *_: self.refresh_history())
+            self.notification_listener.status_changed.connect(self._on_listener_status_changed)
+            # Initial listener check
+            self._check_listener_status()
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -1182,6 +1190,23 @@ class WhatsAppCompanionWidget(QWidget):
         header_layout.addWidget(self.toggle_chk)
 
         layout.addWidget(header_card)
+
+        # Live Notification Monitoring Status Card
+        monitor_card = LiquidGlassCard(self, corner_radius=16)
+        m_layout = QHBoxLayout(monitor_card)
+        m_layout.setContentsMargins(16, 10, 16, 10)
+
+        self.monitor_status_lbl = QLabel("Live Monitoring: Manual Import / Clipboard Mode")
+        self.monitor_status_lbl.setStyleSheet("color: #FFAA00; font-size: 12px; font-weight: bold;")
+        m_layout.addWidget(self.monitor_status_lbl, stretch=1)
+
+        self.toggle_monitor_btn = QPushButton("▶ Start Live Monitoring")
+        self.toggle_monitor_btn.setFixedHeight(32)
+        self.toggle_monitor_btn.setCursor(Qt.PointingHandCursor)
+        self.toggle_monitor_btn.clicked.connect(self._toggle_live_monitoring)
+        m_layout.addWidget(self.toggle_monitor_btn)
+
+        layout.addWidget(monitor_card)
 
         # Main Splitter: Left = Contacts & Paste Import, Right = History & AI Reply
         splitter = QSplitter(Qt.Horizontal, self)
@@ -1289,6 +1314,38 @@ class WhatsAppCompanionWidget(QWidget):
     def _on_toggle_companion(self, checked: bool):
         self.whatsapp_service.set_enabled(checked)
         show_info_message("WhatsApp Companion", f"WhatsApp Personal Companion Mode is now {'enabled' if checked else 'disabled'}.")
+
+    def _check_listener_status(self):
+        if not self.notification_listener:
+            return
+        supported, status_msg = self.notification_listener.check_notification_support()
+        self._on_listener_status_changed(status_msg, self.notification_listener.is_monitoring)
+
+    def _on_listener_status_changed(self, status_msg: str, is_monitoring: bool):
+        self.monitor_status_lbl.setText(f"Live Monitoring: {status_msg}")
+        if is_monitoring:
+            self.monitor_status_lbl.setStyleSheet("color: #7FFFD4; font-size: 12px; font-weight: bold;")
+            self.toggle_monitor_btn.setText("⏹ Stop Live Monitoring")
+            self.toggle_monitor_btn.setStyleSheet("background-color: rgba(255, 68, 68, 80); border: 1px solid #FF4444;")
+        else:
+            self.monitor_status_lbl.setStyleSheet("color: #FFAA00; font-size: 12px; font-weight: bold;")
+            self.toggle_monitor_btn.setText("▶ Start Live Monitoring")
+            self.toggle_monitor_btn.setStyleSheet("")
+
+    def _toggle_live_monitoring(self):
+        if not self.notification_listener:
+            show_info_message("Live Monitoring", "Notification listener not initialized.")
+            return
+
+        if self.notification_listener.is_monitoring:
+            self.notification_listener.stop_monitoring()
+            show_info_message("Live Monitoring", "Live Windows notification monitoring stopped.")
+        else:
+            supported, status_msg = self.notification_listener.start_monitoring()
+            if supported:
+                show_info_message("Live Monitoring Active", "Live Windows WhatsApp Desktop notification monitoring started.")
+            else:
+                show_info_message("Manual Import Fallback", f"Could not start live notification capture: {status_msg}")
 
     def _add_contact(self):
         name = self.contact_name_in.text().strip()

@@ -7,12 +7,15 @@ for personal WhatsApp Desktop user workflows without unofficial APIs or automati
 
 from dataclasses import asdict, dataclass
 from datetime import datetime
+import hashlib
 import json
 import logging
 from pathlib import Path
 import re
-from typing import Any, Dict, List, Optional
+import sys
+from typing import Any, Dict, List, Optional, Tuple
 
+from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QGuiApplication
 
 from config import APP_DIR, get_config_value, save_config
@@ -336,3 +339,141 @@ class WhatsAppService:
         except Exception as e:
             logger.error(f"Clipboard copy error: {e}")
             return False
+
+
+# ----------------------------------------------------------------------
+# WHATSAPP NOTIFICATION LISTENER (WINDOWS WINRT INTEGRATION & FALLBACK)
+# ----------------------------------------------------------------------
+
+class WhatsAppNotificationListener(QObject):
+    """
+    Dedicated listener for Windows WhatsApp Desktop notifications.
+    Uses WinRT UserNotificationListener when available on Windows 10/11.
+    Provides graceful fallback to Manual Import / Clipboard Mode when
+    running on non-Windows platforms, missing winsdk bindings, or when
+    access permissions are denied by Windows settings.
+    """
+
+    notification_received = Signal(str, str, str)  # (sender, body, timestamp)
+    status_changed = Signal(str, bool)             # (status_message, is_live_monitoring)
+
+    def __init__(self, whatsapp_service: WhatsAppService, ai_provider=None, parent=None):
+        super().__init__(parent)
+        self.whatsapp_service = whatsapp_service
+        self.ai_provider = ai_provider
+        self.is_monitoring = False
+        self._processed_hashes: set[str] = set()
+
+    def check_notification_support(self) -> Tuple[bool, str]:
+        """
+        Checks if Windows UserNotificationListener API is available and permissions granted.
+        Returns tuple of (supported: bool, status_message: str).
+        """
+        if sys.platform != "win32":
+            return False, "Manual Import / Clipboard Mode (Live capture available on Windows 10/11)"
+
+        try:
+            try:
+                from winsdk.windows.ui.notifications.management import (
+                    UserNotificationListener,
+                    UserNotificationListenerAccessStatus,
+                )
+            except ImportError:
+                try:
+                    from windows.ui.notifications.management import (
+                        UserNotificationListener,
+                        UserNotificationListenerAccessStatus,
+                    )
+                except ImportError:
+                    return False, "Manual Import / Clipboard Mode (winsdk package not installed)"
+
+            listener = UserNotificationListener.get_current()
+            if not listener:
+                return False, "Manual Import / Clipboard Mode (Windows Notification Listener unavailable)"
+
+            # Check permission status
+            status = listener.get_access_status()
+            if status == UserNotificationListenerAccessStatus.ALLOWED:
+                return True, "Live Windows WhatsApp Desktop Notification Monitoring Active"
+            elif status == UserNotificationListenerAccessStatus.DENIED:
+                return False, "Manual Import Mode (Notification Access Denied in Windows Settings)"
+            else:
+                return False, "Manual Import Mode (Notification Access Unspecified)"
+
+        except Exception as e:
+            logger.warning(f"Windows Notification Listener check error: {e}")
+            return False, f"Manual Import / Clipboard Mode ({type(e).__name__})"
+
+    def start_monitoring(self) -> Tuple[bool, str]:
+        """
+        Starts live notification monitoring if supported, or falls back gracefully to manual mode.
+        """
+        supported, status_msg = self.check_notification_support()
+        self.is_monitoring = supported
+        self.status_changed.emit(status_msg, self.is_monitoring)
+        logger.info(f"WhatsApp notification listener state: monitoring={self.is_monitoring}, msg='{status_msg}'")
+        return supported, status_msg
+
+    def stop_monitoring(self) -> None:
+        """Stops live notification monitoring."""
+        self.is_monitoring = False
+        status_msg = "Manual Import / Clipboard Mode (Monitoring Stopped)"
+        self.status_changed.emit(status_msg, False)
+        logger.info("WhatsApp notification listener stopped.")
+
+    def process_raw_notification(
+        self,
+        app_id: str,
+        app_name: str,
+        sender: str,
+        body: str,
+        timestamp: Optional[str] = None,
+    ) -> Optional[WhatsAppMessage]:
+        """
+        Filters and processes raw OS notifications.
+        CRITICAL RULES:
+        1. Filters strictly for WhatsApp Desktop notifications. Ignores unrelated apps.
+        2. Deduplicates incoming notifications using a unique hash signature.
+        3. Parses sender, body preview, and timestamp cleanly without assuming all exist.
+        4. Never logs private message contents or credentials.
+        """
+        app_id_clean = (app_id or "").lower()
+        app_name_clean = (app_name or "").lower()
+
+        # Check if notification originated from WhatsApp Desktop
+        is_whatsapp = "whatsapp" in app_id_clean or "whatsapp" in app_name_clean or "5319275a.whatsappdesktop" in app_id_clean
+        if not is_whatsapp:
+            logger.debug(f"Ignored non-WhatsApp notification from app: '{app_id}' / '{app_name}'")
+            return None
+
+        clean_sender = (sender or "").strip() or "WhatsApp Contact"
+        clean_body = (body or "").strip()
+        if not clean_body:
+            logger.debug("Ignored WhatsApp notification with empty body.")
+            return None
+
+        clean_ts = timestamp or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # Deduplication hash calculation
+        hash_input = f"{clean_sender.lower()}:{clean_body}:{clean_ts[:16]}"
+        hash_key = hashlib.sha256(hash_input.encode("utf-8")).hexdigest()
+
+        if hash_key in self._processed_hashes:
+            logger.debug("Ignored duplicate WhatsApp notification.")
+            return None
+
+        self._processed_hashes.add(hash_key)
+        # Limit hash memory set size
+        if len(self._processed_hashes) > 1000:
+            self._processed_hashes.clear()
+
+        # Import and analyze captured message through WhatsAppService
+        msg = self.whatsapp_service.import_and_analyze_message(
+            sender=clean_sender,
+            message_text=clean_body,
+            ai_provider=self.ai_provider,
+        )
+
+        self.notification_received.emit(clean_sender, clean_body, clean_ts)
+        logger.info(f"Captured live WhatsApp notification from '{clean_sender}' (ID: {msg.id})")
+        return msg

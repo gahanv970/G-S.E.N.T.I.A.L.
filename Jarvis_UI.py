@@ -756,6 +756,50 @@ class JarvisMainWindow(QMainWindow):
                     act_res = self.automation_service.launch_app(app_id, user_confirmed=True)
                     response_text += f"\n[{act_res.message}]"
 
+            elif intent_type == "open_path" and ("path" in params or "file_or_folder_path" in params):
+                target_path = params.get("path") or params.get("file_or_folder_path")
+                if requires_confirm:
+                    reply = QMessageBox.question(
+                        self,
+                        "Confirm Open Path",
+                        f"S.E.N.T.I.A.L. wants to open local path '{target_path}'. Do you approve?",
+                        QMessageBox.Yes | QMessageBox.No,
+                        QMessageBox.No,
+                    )
+                    if reply == QMessageBox.Yes:
+                        act_res = self.automation_service.open_path(target_path, user_confirmed=True)
+                        response_text += f"\n[{act_res.message}]"
+                    else:
+                        response_text = f"Action cancelled. Opening '{target_path}' was declined."
+                else:
+                    act_res = self.automation_service.open_path(target_path, user_confirmed=True)
+                    response_text += f"\n[{act_res.message}]"
+
+            elif intent_type == "web_search" and "query" in params:
+                search_q = params["query"]
+                act_res = self.automation_service.web_search(search_q, user_confirmed=True)
+                response_text += f"\n[{act_res.message}]"
+
+            elif intent_type == "window_management" and "action" in params and "app_id" in params:
+                win_act = params["action"]
+                app_id = params["app_id"]
+                if requires_confirm:
+                    reply = QMessageBox.question(
+                        self,
+                        "Confirm Window Control",
+                        f"S.E.N.T.I.A.L. wants to {win_act} window for '{app_id}'. Do you approve?",
+                        QMessageBox.Yes | QMessageBox.No,
+                        QMessageBox.No,
+                    )
+                    if reply == QMessageBox.Yes:
+                        act_res = self.automation_service.window_management(win_act, app_id, user_confirmed=True)
+                        response_text += f"\n[{act_res.message}]"
+                    else:
+                        response_text = f"Action cancelled. Window management for '{app_id}' was declined."
+                else:
+                    act_res = self.automation_service.window_management(win_act, app_id, user_confirmed=True)
+                    response_text += f"\n[{act_res.message}]"
+
             elif intent_type == "create_task" and "title" in params:
                 task_title = params["title"]
                 if requires_confirm:

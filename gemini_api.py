@@ -27,6 +27,9 @@ SUPPORTED_MODELS = [
 VALID_INTENT_TYPES = {
     "launch_app",
     "open_url",
+    "open_path",
+    "web_search",
+    "window_management",
     "create_task",
     "compose_email",
     "system_status",
@@ -77,6 +80,26 @@ def validate_intent_output(data: Dict[str, Any]) -> Dict[str, Any]:
             intent_type = "general_chat"
             response_text = "Security violation: Only HTTP and HTTPS URLs are permitted."
             params = {}
+
+    elif intent_type == "open_path":
+        raw_path = str(params.get("path", "") or params.get("file_or_folder_path", "")).strip()
+        if ".." in raw_path:
+            intent_type = "general_chat"
+            response_text = "Security violation: Path traversal '..' is prohibited."
+            params = {}
+        else:
+            requires_confirmation = True
+
+    elif intent_type == "window_management":
+        action = str(params.get("action", "")).strip().lower()
+        app_id = str(params.get("app_id", "")).strip().lower()
+        from automation_service import APPROVED_APPS
+        if action not in ("minimize", "maximize", "restore", "focus") or app_id not in APPROVED_APPS:
+            intent_type = "general_chat"
+            response_text = f"Invalid window action or unapproved app '{app_id}'."
+            params = {}
+        else:
+            requires_confirmation = True
 
     elif intent_type in ("compose_email", "create_task"):
         requires_confirmation = True
@@ -387,11 +410,14 @@ class GeminiAIProvider:
             "Do NOT include markdown block formatting or extra commentary outside the JSON object.\n\n"
             "JSON Schema:\n"
             "{\n"
-            '  "intent_type": "launch_app | open_url | create_task | compose_email | system_status | general_chat",\n'
+            '  "intent_type": "launch_app | open_url | open_path | web_search | window_management | create_task | compose_email | system_status | general_chat",\n'
             '  "response_text": "Concise natural language answer or action summary",\n'
             '  "parameters": {\n'
             '     "app_id": "notepad | calculator | explorer | paint | taskmgr | cmd",\n'
             '     "url": "https://...",\n'
+            '     "path": "C:\\path\\to\\file_or_folder",\n'
+            '     "query": "web search terms",\n'
+            '     "action": "minimize | maximize | restore | focus",\n'
             '     "title": "task title",\n'
             '     "to": "recipient email",\n'
             '     "subject": "email subject",\n'

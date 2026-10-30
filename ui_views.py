@@ -1932,6 +1932,11 @@ class AutomationManagementWidget(QWidget):
 
         header_layout.addStretch()
 
+        self.auto_master_chk = QCheckBox("Enable Desktop Automation")
+        self.auto_master_chk.setChecked(self.automation_service.is_automation_enabled())
+        self.auto_master_chk.toggled.connect(self._on_toggle_master_automation)
+        header_layout.addWidget(self.auto_master_chk)
+
         refresh_telemetry_btn = QPushButton("🔄 Refresh Telemetry")
         refresh_telemetry_btn.setCursor(Qt.PointingHandCursor)
         refresh_telemetry_btn.clicked.connect(self.refresh_system_status)
@@ -1995,7 +2000,7 @@ class AutomationManagementWidget(QWidget):
         apps_layout.addWidget(apps_scroll)
         mid_splitter.addWidget(apps_card)
 
-        # Right: URL Launcher & Workflows
+        # Right: URL Launcher, Path Opener, Web Search & Window Controls
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(0, 0, 0, 0)
@@ -2004,27 +2009,87 @@ class AutomationManagementWidget(QWidget):
         # URL Launcher
         url_card = LiquidGlassCard(right_panel, corner_radius=16)
         url_layout = QVBoxLayout(url_card)
-        url_layout.setContentsMargins(14, 12, 14, 12)
+        url_layout.setContentsMargins(14, 10, 14, 10)
         url_layout.addWidget(QLabel("<b style='color: #7FFFD4;'>Safe Browser URL Launcher</b>"))
 
         url_row = QHBoxLayout()
         self.url_input = QLineEdit()
         self.url_input.setPlaceholderText("https://example.com...")
-        self.url_input.setFixedHeight(34)
+        self.url_input.setFixedHeight(32)
         url_row.addWidget(self.url_input, stretch=3)
 
         open_url_btn = QPushButton("Open URL")
-        open_url_btn.setFixedHeight(34)
+        open_url_btn.setFixedHeight(32)
         open_url_btn.setCursor(Qt.PointingHandCursor)
         open_url_btn.clicked.connect(self._open_url_action)
         url_row.addWidget(open_url_btn, stretch=1)
         url_layout.addLayout(url_row)
         right_layout.addWidget(url_card)
 
+        # File/Folder Opener Card
+        path_card = LiquidGlassCard(right_panel, corner_radius=16)
+        p_layout = QVBoxLayout(path_card)
+        p_layout.setContentsMargins(14, 10, 14, 10)
+        p_layout.addWidget(QLabel("<b style='color: #00C8FF;'>Open Local File or Folder</b>"))
+
+        p_row = QHBoxLayout()
+        self.path_input = QLineEdit()
+        self.path_input.setPlaceholderText("Local path (e.g. C:\\Users\\... or /home/...)...")
+        self.path_input.setFixedHeight(32)
+        p_row.addWidget(self.path_input, stretch=3)
+
+        open_p_btn = QPushButton("Open Path")
+        open_p_btn.setFixedHeight(32)
+        open_p_btn.setCursor(Qt.PointingHandCursor)
+        open_p_btn.clicked.connect(self._open_path_action)
+        p_row.addWidget(open_p_btn, stretch=1)
+        p_layout.addLayout(p_row)
+        right_layout.addWidget(path_card)
+
+        # Web Search & Window Controls Row
+        ctrl_row = QHBoxLayout()
+
+        search_card = LiquidGlassCard(right_panel, corner_radius=16)
+        s_layout = QVBoxLayout(search_card)
+        s_layout.setContentsMargins(12, 10, 12, 10)
+        s_layout.addWidget(QLabel("<b style='color: #7FFFD4;'>Web Search</b>"))
+        self.web_search_input = QLineEdit()
+        self.web_search_input.setPlaceholderText("Search terms...")
+        self.web_search_input.setFixedHeight(30)
+        self.web_search_input.returnPressed.connect(self._web_search_action)
+        s_layout.addWidget(self.web_search_input)
+        web_search_btn = QPushButton("🔍 Search")
+        web_search_btn.setFixedHeight(28)
+        web_search_btn.clicked.connect(self._web_search_action)
+        s_layout.addWidget(web_search_btn)
+        ctrl_row.addWidget(search_card, stretch=1)
+
+        window_card = LiquidGlassCard(right_panel, corner_radius=16)
+        w_layout = QVBoxLayout(window_card)
+        w_layout.setContentsMargins(12, 10, 12, 10)
+        w_layout.addWidget(QLabel("<b style='color: #00C8FF;'>Window Control</b>"))
+        w_row = QHBoxLayout()
+        self.window_act_combo = QComboBox()
+        self.window_act_combo.addItems(["minimize", "maximize", "restore", "focus"])
+        self.window_act_combo.setFixedHeight(30)
+        w_row.addWidget(self.window_act_combo)
+        self.window_app_combo = QComboBox()
+        self.window_app_combo.addItems(list(APPROVED_APPS.keys()))
+        self.window_app_combo.setFixedHeight(30)
+        w_row.addWidget(self.window_app_combo)
+        w_layout.addLayout(w_row)
+        win_exec_btn = QPushButton("Execute")
+        win_exec_btn.setFixedHeight(28)
+        win_exec_btn.clicked.connect(self._window_control_action)
+        w_layout.addWidget(win_exec_btn)
+        ctrl_row.addWidget(window_card, stretch=1)
+
+        right_layout.addLayout(ctrl_row)
+
         # Preset Workflows
         wf_card = LiquidGlassCard(right_panel, corner_radius=16)
         wf_layout = QVBoxLayout(wf_card)
-        wf_layout.setContentsMargins(14, 12, 14, 12)
+        wf_layout.setContentsMargins(14, 10, 14, 10)
         wf_layout.addWidget(QLabel("<b style='color: #00C8FF;'>Preset Safe Workflows</b>"))
 
         for wf_id, wf_data in self.automation_service.get_registered_workflows().items():
@@ -2035,7 +2100,7 @@ class AutomationManagementWidget(QWidget):
             wf_row.addLayout(w_txt, stretch=1)
 
             run_btn = QPushButton("Execute")
-            run_btn.setFixedSize(70, 30)
+            run_btn.setFixedSize(70, 28)
             run_btn.setCursor(Qt.PointingHandCursor)
             run_btn.clicked.connect(lambda _, wid=wf_id: self._run_workflow_action(wid))
             wf_row.addWidget(run_btn)
@@ -2093,6 +2158,10 @@ class AutomationManagementWidget(QWidget):
             show_error_message("Automation", res.message)
         self.refresh_audit_log()
 
+    def _on_toggle_master_automation(self, checked: bool):
+        self.automation_service.set_automation_enabled(checked)
+        show_info_message("Desktop Automation", f"Desktop automation is now {'enabled' if checked else 'disabled'}.")
+
     def _open_url_action(self):
         url = self.url_input.text().strip()
         if not url:
@@ -2106,6 +2175,61 @@ class AutomationManagementWidget(QWidget):
         else:
             show_error_message("Security Rejection", res.message)
         self.refresh_audit_log()
+
+    def _open_path_action(self):
+        path_str = self.path_input.text().strip()
+        if not path_str:
+            show_error_message("Validation Error", "Path cannot be blank.")
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "Confirm Open Path",
+            f"Confirm opening local file or folder?\n\nPath: {path_str}",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply == QMessageBox.Yes:
+            res = self.automation_service.open_path(path_str, user_confirmed=True)
+            if res.success:
+                self.path_input.clear()
+                show_info_message("Path Opener", res.message)
+            else:
+                show_error_message("Security Rejection", res.message)
+            self.refresh_audit_log()
+
+    def _web_search_action(self):
+        q = self.web_search_input.text().strip()
+        if not q:
+            show_error_message("Validation Error", "Search query cannot be blank.")
+            return
+
+        res = self.automation_service.web_search(q, user_confirmed=True)
+        if res.success:
+            self.web_search_input.clear()
+            show_info_message("Web Search", res.message)
+        else:
+            show_error_message("Error", res.message)
+        self.refresh_audit_log()
+
+    def _window_control_action(self):
+        act = self.window_act_combo.currentText()
+        app_id = self.window_app_combo.currentText()
+
+        reply = QMessageBox.question(
+            self,
+            "Confirm Window Action",
+            f"Confirm window action '{act}' for application '{app_id}'?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply == QMessageBox.Yes:
+            res = self.automation_service.window_management(act, app_id, user_confirmed=True)
+            if res.success:
+                show_info_message("Window Management", res.message)
+            else:
+                show_error_message("Window Action Error", res.message)
+            self.refresh_audit_log()
 
     def _run_workflow_action(self, wf_id: str):
         res = self.automation_service.execute_workflow(wf_id, user_confirmed=True)

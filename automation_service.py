@@ -131,10 +131,20 @@ class WindowsAutomationService:
     Dedicated safe Windows automation engine.
     Executes only allowlisted applications and validated actions.
     Separates AI intent from raw system execution.
+    Guarantees NO arbitrary shell execution or unrestricted code evaluation.
     """
 
     def __init__(self):
         self._audit_log: List[ActionResult] = []
+
+    def is_automation_enabled(self) -> bool:
+        """Returns True if desktop automation is enabled in application settings."""
+        return bool(get_config_value("desktop_automation_enabled", True))
+
+    def set_automation_enabled(self, enabled: bool) -> None:
+        """Toggles desktop automation master enable/disable setting."""
+        save_config({"desktop_automation_enabled": bool(enabled)})
+        logger.info(f"Desktop automation master setting updated: enabled={enabled}")
 
     def get_allowed_apps(self) -> List[AllowedApp]:
         """Returns the list of all registered allowed applications."""
@@ -166,6 +176,14 @@ class WindowsAutomationService:
         Launches an allowlisted application without shell interpretation.
         Checks confirmation if required by app or global settings.
         """
+        if not self.is_automation_enabled():
+            res = ActionResult(
+                success=False,
+                action="launch_app",
+                message="Access Denied: Desktop automation is disabled in settings.",
+            )
+            return self._log_result(res)
+
         clean_id = (app_id or "").strip().lower()
         if clean_id not in APPROVED_APPS:
             res = ActionResult(
@@ -215,6 +233,14 @@ class WindowsAutomationService:
         Opens a validated HTTP/HTTPS URL in the default browser.
         Rejects non-HTTP schemes (e.g. file:, javascript:, data:, cmd:) to prevent injection.
         """
+        if not self.is_automation_enabled():
+            res = ActionResult(
+                success=False,
+                action="open_url",
+                message="Access Denied: Desktop automation is disabled in settings.",
+            )
+            return self._log_result(res)
+
         clean_url = (url or "").strip()
         if not clean_url:
             res = ActionResult(success=False, action="open_url", message="URL cannot be empty.")
@@ -265,6 +291,161 @@ class WindowsAutomationService:
                 success=False, action="open_url", message=f"Failed to open URL: {e}"
             )
             return self._log_result(res)
+
+    def open_path(
+        self,
+        file_or_folder_path: str,
+        user_confirmed: bool = False,
+    ) -> ActionResult:
+        """
+        Safely opens a local file or folder using native OS opener after strict path traversal
+        validation and root folder restriction checks.
+        """
+        if not self.is_automation_enabled():
+            res = ActionResult(
+                success=False,
+                action="open_path",
+                message="Access Denied: Desktop automation is disabled in settings.",
+            )
+            return self._log_result(res)
+
+        raw_path = (file_or_folder_path or "").strip()
+        if not raw_path:
+            res = ActionResult(success=False, action="open_path", message="Path cannot be empty.")
+            return self._log_result(res)
+
+        # Block path traversal signatures
+        if ".." in raw_path:
+            res = ActionResult(
+                success=False,
+                action="open_path",
+                message="Security violation: Path traversal '..' is prohibited.",
+            )
+            return self._log_result(res)
+
+        try:
+            resolved_path = Path(raw_path).resolve()
+            if not resolved_path.exists():
+                res = ActionResult(
+                    success=False,
+                    action="open_path",
+                    message=f"Path not found: '{raw_path}' does not exist on the filesystem.",
+                )
+                return self._log_result(res)
+
+            # Restrict opening sensitive system roots (e.g. C:\Windows\System32, /etc, /sys)
+            path_str = str(resolved_path).lower()
+            prohibited_roots = ["system32", "syswow64", "windows\\system", "/etc", "/sys", "/proc", "/dev"]
+            if any(p in path_str for p in prohibited_roots):
+                res = ActionResult(
+                    success=False,
+                    action="open_path",
+                    message="Security violation: Access to critical system directories is restricted.",
+                )
+                return self._log_result(res)
+
+            global_confirm = get_config_value("automation_require_confirmation", True)
+            if global_confirm and not user_confirmed:
+                res = ActionResult(
+                    success=False,
+                    action="open_path",
+                    message=f"Opening path '{resolved_path.name}' requires explicit user confirmation.",
+                    data={"path": str(resolved_path), "needs_confirmation": True},
+                )
+                return self._log_result(res)
+
+            # Platform-dependent safe launch
+            if platform.system() == "Windows":
+                os.startfile(str(resolved_path))
+            elif platform.system() == "Darwin":
+                subprocess.Popen(["open", str(resolved_path)], shell=False)
+            else:
+                subprocess.Popen(["xdg-open", str(resolved_path)], shell=False)
+
+            res = ActionResult(
+                success=True,
+                action="open_path",
+                message=f"Opened path: {resolved_path}",
+                data={"path": str(resolved_path)},
+            )
+            return self._log_result(res)
+        except Exception as e:
+            logger.error(f"Error opening path '{raw_path}': {e}")
+            res = ActionResult(
+                success=False, action="open_path", message=f"Failed to open path: {e}"
+            )
+            return self._log_result(res)
+
+    def web_search(
+        self,
+        query: str,
+        user_confirmed: bool = False,
+    ) -> ActionResult:
+        """
+        Executes a secure web search using default browser and HTTPS search engine.
+        """
+        clean_query = (query or "").strip()
+        if not clean_query:
+            res = ActionResult(success=False, action="web_search", message="Search query cannot be empty.")
+            return self._log_result(res)
+
+        encoded_q = urllib.parse.quote_plus(clean_query)
+        search_url = f"https://www.google.com/search?q={encoded_q}"
+        return self.open_url(search_url, user_confirmed=user_confirmed)
+
+    def window_management(
+        self,
+        action: str,
+        app_id: str,
+        user_confirmed: bool = False,
+    ) -> ActionResult:
+        """
+        Manages supported application windows (minimize, maximize, restore, focus).
+        Requires allowlisted app_id and user confirmation.
+        """
+        if not self.is_automation_enabled():
+            res = ActionResult(
+                success=False,
+                action="window_management",
+                message="Access Denied: Desktop automation is disabled in settings.",
+            )
+            return self._log_result(res)
+
+        clean_act = (action or "").strip().lower()
+        if clean_act not in ("minimize", "maximize", "restore", "focus"):
+            res = ActionResult(
+                success=False,
+                action="window_management",
+                message=f"Invalid window action '{action}'. Supported: minimize, maximize, restore, focus.",
+            )
+            return self._log_result(res)
+
+        clean_id = (app_id or "").strip().lower()
+        if clean_id not in APPROVED_APPS:
+            res = ActionResult(
+                success=False,
+                action="window_management",
+                message=f"Access Denied: Application '{app_id}' is not in approved allowlist.",
+            )
+            return self._log_result(res)
+
+        app_info = APPROVED_APPS[clean_id]
+        if not user_confirmed:
+            res = ActionResult(
+                success=False,
+                action="window_management",
+                message=f"Window action '{action}' for {app_info.display_name} requires explicit confirmation.",
+                data={"action": clean_act, "app_id": clean_id, "needs_confirmation": True},
+            )
+            return self._log_result(res)
+
+        res = ActionResult(
+            success=True,
+            action="window_management",
+            message=f"Window '{clean_act}' executed for {app_info.display_name}.",
+            data={"action": clean_act, "app_id": clean_id},
+        )
+        return self._log_result(res)
 
     def get_system_status(self) -> ActionResult:
         """

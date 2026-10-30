@@ -234,3 +234,68 @@ def test_gmail_list_messages_pagination():
     assert len(summaries) == 2
     assert next_token == "page_token_abc123"
     assert mock_messages.list.call_args[1].get("pageToken") == "initial_token"
+
+
+def test_gmail_list_and_get_drafts_mocked():
+    svc = GmailService(token_path=Path("dummy"), credentials_path=Path("dummy"))
+
+    mock_service = MagicMock()
+    mock_drafts = MagicMock()
+
+    mock_drafts.list.return_value.execute.return_value = {
+        "drafts": [{"id": "draft_101"}, {"id": "draft_102"}]
+    }
+    mock_drafts.get.return_value.execute.return_value = {
+        "id": "draft_101",
+        "message": {
+            "id": "msg_d1",
+            "snippet": "Draft body preview",
+            "payload": {
+                "headers": [
+                    {"name": "To", "value": "partner@corp.com"},
+                    {"name": "Subject", "value": "Proposed Contract"},
+                ]
+            },
+        },
+    }
+
+    mock_service.users.return_value.drafts.return_value = mock_drafts
+    svc._service = mock_service
+    svc._creds = MagicMock()
+    svc._creds.valid = True
+
+    # List drafts
+    drafts = svc.list_drafts()
+    assert len(drafts) == 2
+    assert drafts[0].id == "draft_101"
+    assert drafts[0].recipient == "partner@corp.com"
+    assert drafts[0].subject == "Proposed Contract"
+
+    # Get single draft detail
+    detail = svc.get_draft_detail("draft_101")
+    assert detail.id == "draft_101"
+    assert detail.recipient == "partner@corp.com"
+
+
+def test_gmail_update_draft_mocked():
+    svc = GmailService(token_path=Path("dummy"), credentials_path=Path("dummy"))
+
+    mock_service = MagicMock()
+    mock_drafts = MagicMock()
+
+    mock_drafts.update.return_value.execute.return_value = {"id": "draft_101"}
+    mock_service.users.return_value.drafts.return_value = mock_drafts
+    svc._service = mock_service
+    svc._creds = MagicMock()
+    svc._creds.valid = True
+
+    updated_draft = svc.update_draft(
+        draft_id="draft_101",
+        to="partner@corp.com",
+        subject="Updated Subject",
+        body="Updated body content",
+    )
+
+    assert updated_draft.id == "draft_101"
+    assert updated_draft.subject == "Updated Subject"
+    assert mock_drafts.update.called

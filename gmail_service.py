@@ -279,6 +279,65 @@ class GmailService:
 
     # ------------------------------------------------------------------ Drafts & Sending
 
+    def list_drafts(self, max_results: int = 15) -> List[EmailDraft]:
+        """
+        Retrieves saved drafts from Gmail API.
+        """
+        if not self.is_authenticated():
+            raise RuntimeError("Gmail is not authenticated.")
+
+        try:
+            results = self._service.users().drafts().list(
+                userId="me", maxResults=min(max(1, max_results), 50)
+            ).execute()
+            draft_metas = results.get("drafts", [])
+
+            drafts: List[EmailDraft] = []
+            for d_meta in draft_metas:
+                d_id = d_meta["id"]
+                try:
+                    full_draft = self._service.users().drafts().get(
+                        userId="me", id=d_id, format="full"
+                    ).execute()
+                    msg = full_draft.get("message", {})
+                    detail = self._parse_detail(msg)
+                    drafts.append(EmailDraft(
+                        id=d_id,
+                        recipient=detail.recipient,
+                        subject=detail.subject,
+                        body=detail.body_text,
+                    ))
+                except Exception as e:
+                    logger.warning(f"Could not parse draft {d_id}: {e}")
+
+            return drafts
+        except HttpError as e:
+            logger.error(f"Failed to list Gmail drafts: {e}")
+            raise RuntimeError(f"Failed to list drafts: {e}") from e
+
+    def get_draft_detail(self, draft_id: str) -> Optional[EmailDraft]:
+        """
+        Retrieves detail for a specific Gmail draft.
+        """
+        if not self.is_authenticated():
+            raise RuntimeError("Gmail is not authenticated.")
+
+        try:
+            full_draft = self._service.users().drafts().get(
+                userId="me", id=draft_id, format="full"
+            ).execute()
+            msg = full_draft.get("message", {})
+            detail = self._parse_detail(msg)
+            return EmailDraft(
+                id=draft_id,
+                recipient=detail.recipient,
+                subject=detail.subject,
+                body=detail.body_text,
+            )
+        except HttpError as e:
+            logger.error(f"Failed to fetch draft {draft_id}: {e}")
+            raise RuntimeError(f"Failed to read draft {draft_id}: {e}") from e
+
     def create_draft(self, to: str, subject: str, body: str) -> EmailDraft:
         """
         Creates and saves a new draft in Gmail.

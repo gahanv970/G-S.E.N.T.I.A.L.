@@ -614,6 +614,7 @@ class EmailManagementWidget(QWidget):
         self._current_page_token: Optional[str] = None
         self._next_page_token: Optional[str] = None
         self._page_tokens_history: List[Optional[str]] = []
+        self._active_draft_id: Optional[str] = None
         self._setup_ui()
         self.update_auth_status()
 
@@ -712,7 +713,26 @@ class EmailManagementWidget(QWidget):
         right_layout.setContentsMargins(18, 14, 18, 14)
         right_layout.setSpacing(10)
 
-        right_layout.addWidget(QLabel("<b style='color: #7FFFD4; font-size: 14px;'>Compose / Draft Email</b>"))
+        top_draft_row = QHBoxLayout()
+        top_draft_row.addWidget(QLabel("<b style='color: #7FFFD4; font-size: 14px;'>Compose / Draft Email</b>"), stretch=1)
+
+        self.new_draft_btn = QPushButton("➕ New")
+        self.new_draft_btn.setFixedHeight(28)
+        self.new_draft_btn.setCursor(Qt.PointingHandCursor)
+        self.new_draft_btn.clicked.connect(self._clear_active_draft)
+        top_draft_row.addWidget(self.new_draft_btn)
+
+        self.saved_drafts_btn = QPushButton("📂 Gmail Drafts")
+        self.saved_drafts_btn.setFixedHeight(28)
+        self.saved_drafts_btn.setCursor(Qt.PointingHandCursor)
+        self.saved_drafts_btn.clicked.connect(self._open_saved_drafts_dialog)
+        top_draft_row.addWidget(self.saved_drafts_btn)
+
+        right_layout.addLayout(top_draft_row)
+
+        self.draft_status_lbl = QLabel("Status: Local Unsaved Draft")
+        self.draft_status_lbl.setStyleSheet("color: #A0AEC0; font-size: 11px; margin-bottom: 4px;")
+        right_layout.addWidget(self.draft_status_lbl)
 
         self.to_input = QLineEdit()
         self.to_input.setPlaceholderText("Recipient (To: email@example.com)...")
@@ -972,9 +992,11 @@ class EmailManagementWidget(QWidget):
                 try:
                     ai_prov = getattr(self.window(), "ai_provider", None)
                     res = await asyncio.to_thread(generate_reply_draft, detail, ai_prov)
+                    self._active_draft_id = None
                     self.to_input.setText(detail.sender)
                     self.subject_input.setText(res.get("subject", f"Re: {detail.subject}"))
                     self.body_input.setText(res.get("body", ""))
+                    self._update_draft_status_ui()
                     dlg.accept()
                     show_info_message("Reply Draft Generated", "Proposed reply draft populated in Compose tab for your review.")
                 except Exception as ex:
@@ -989,6 +1011,78 @@ class EmailManagementWidget(QWidget):
         except Exception as e:
             show_error_message("Read Error", str(e))
 
+    def _clear_active_draft(self):
+        self._active_draft_id = None
+        self.to_input.clear()
+        self.subject_input.clear()
+        self.body_input.clear()
+        self._update_draft_status_ui()
+
+    def _update_draft_status_ui(self):
+        if self._active_draft_id:
+            self.draft_status_lbl.setText(f"Status: Saved in Gmail (ID: {self._active_draft_id[:8]}...)")
+            self.draft_status_lbl.setStyleSheet("color: #7FFFD4; font-size: 11px; font-weight: bold;")
+        else:
+            self.draft_status_lbl.setText("Status: Local Unsaved Draft")
+            self.draft_status_lbl.setStyleSheet("color: #FFAA00; font-size: 11px;")
+
+    @asyncSlot()
+    async def _open_saved_drafts_dialog(self):
+        if not self.gmail_service.is_authenticated():
+            show_error_message("Authentication Required", "Please connect your Gmail account to view saved drafts.")
+            return
+
+        try:
+            drafts = await asyncio.to_thread(self.gmail_service.list_drafts)
+            if not drafts:
+                show_info_message("No Drafts", "No saved Gmail drafts found.")
+                return
+
+            dlg = QDialog(self)
+            dlg.setWindowTitle("Saved Gmail Drafts")
+            dlg.resize(500, 350)
+            d_layout = QVBoxLayout(dlg)
+
+            d_layout.addWidget(QLabel("<b>Select a saved Gmail draft to edit:</b>"))
+
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            content = QWidget()
+            c_layout = QVBoxLayout(content)
+            c_layout.setSpacing(6)
+
+            for draft in drafts:
+                btn = QPushButton(f"Subject: {draft.subject or '(No Subject)'} | To: {draft.recipient or '(No Recipient)'}")
+                btn.setCursor(Qt.PointingHandCursor)
+                btn.clicked.connect(lambda _, did=draft.id: self._load_draft_to_compose(did, dlg))
+                c_layout.addWidget(btn)
+
+            c_layout.addStretch()
+            scroll.setWidget(content)
+            d_layout.addWidget(scroll)
+
+            close_btn = QPushButton("Cancel")
+            close_btn.clicked.connect(dlg.reject)
+            d_layout.addWidget(close_btn)
+
+            dlg.exec()
+        except Exception as e:
+            show_error_message("Drafts Error", str(e))
+
+    @asyncSlot()
+    async def _load_draft_to_compose(self, draft_id: str, dialog: QDialog):
+        try:
+            draft = await asyncio.to_thread(self.gmail_service.get_draft_detail, draft_id)
+            if draft:
+                self._active_draft_id = draft.id
+                self.to_input.setText(draft.recipient)
+                self.subject_input.setText(draft.subject)
+                self.body_input.setText(draft.body)
+                self._update_draft_status_ui()
+                dialog.accept()
+        except Exception as e:
+            show_error_message("Load Draft Error", str(e))
+
     @asyncSlot()
     async def _save_draft(self):
         to = self.to_input.text().strip()
@@ -996,8 +1090,17 @@ class EmailManagementWidget(QWidget):
         body = self.body_input.toPlainText()
 
         try:
-            draft = await asyncio.to_thread(self.gmail_service.create_draft, to, subj, body)
-            show_info_message("Draft Saved", f"Draft saved successfully in Gmail (ID: {draft.id})")
+            if self._active_draft_id:
+                draft = await asyncio.to_thread(
+                    self.gmail_service.update_draft, self._active_draft_id, to, subj, body
+                )
+                show_info_message("Draft Updated", f"Gmail draft updated successfully (ID: {draft.id})")
+            else:
+                draft = await asyncio.to_thread(self.gmail_service.create_draft, to, subj, body)
+                self._active_draft_id = draft.id
+                show_info_message("Draft Saved", f"Draft saved successfully in Gmail (ID: {draft.id})")
+
+            self._update_draft_status_ui()
         except Exception as e:
             show_error_message("Draft Error", str(e))
 

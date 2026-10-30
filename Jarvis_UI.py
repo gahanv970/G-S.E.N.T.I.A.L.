@@ -38,10 +38,12 @@ from gui_components import LiquidGlassBackground, LiquidGlassCard
 from memory_service import MemoryService
 from microphone_service import MicrophoneService, transcribe_audio_bytes
 from task_service import TaskService
+from alert_service import AlertNotificationService
 from ui_views import (
     AutomationManagementWidget,
     EmailManagementWidget,
     MemoryManagementWidget,
+    NotificationCenterWidget,
     TaskManagementWidget,
     WhatsAppCompanionWidget,
 )
@@ -70,6 +72,7 @@ class JarvisMainWindow(QMainWindow):
 
         # Initialize Services
         self.ai_provider = GeminiAIProvider()
+        self.alert_service = AlertNotificationService()
         self.task_service = TaskService()
         self.memory_service = MemoryService()
         self.gmail_service = GmailService()
@@ -123,12 +126,13 @@ class JarvisMainWindow(QMainWindow):
 
         nav_items = [
             ("💬 Chat", 0),
-            ("📧 Email", 1),
-            ("📱 WhatsApp", 2),
-            ("⚡ Automation", 3),
-            ("📋 Tasks", 4),
-            ("🧠 Memory", 5),
-            ("⚙️ Settings", 6),
+            ("🔔 Alerts", 1),
+            ("📧 Email", 2),
+            ("📱 WhatsApp", 3),
+            ("⚡ Automation", 4),
+            ("📋 Tasks", 5),
+            ("🧠 Memory", 6),
+            ("⚙️ Settings", 7),
         ]
 
         for text, index in nav_items:
@@ -158,11 +162,15 @@ class JarvisMainWindow(QMainWindow):
         self._setup_chat_view()
         self.stacked_widget.addWidget(self.chat_view)
 
-        # 1: Email View
+        # 1: Alert Notification Center View
+        self.alert_view = NotificationCenterWidget(self.alert_service, self.content_area)
+        self.stacked_widget.addWidget(self.alert_view)
+
+        # 2: Email View
         self.email_view = EmailManagementWidget(self.gmail_service, self.content_area)
         self.stacked_widget.addWidget(self.email_view)
 
-        # 2: WhatsApp Personal Companion View
+        # 3: WhatsApp Personal Companion View
         self.whatsapp_view = WhatsAppCompanionWidget(
             self.whatsapp_service,
             notification_listener=self.whatsapp_listener,
@@ -170,19 +178,19 @@ class JarvisMainWindow(QMainWindow):
         )
         self.stacked_widget.addWidget(self.whatsapp_view)
 
-        # 3: Windows Automation View
+        # 4: Windows Automation View
         self.automation_view = AutomationManagementWidget(self.automation_service, self.content_area)
         self.stacked_widget.addWidget(self.automation_view)
 
-        # 4: Task Management View
+        # 5: Task Management View
         self.task_view = TaskManagementWidget(self.task_service, self.content_area)
         self.stacked_widget.addWidget(self.task_view)
 
-        # 5: Memory & Personalization View
+        # 6: Memory & Personalization View
         self.memory_view = MemoryManagementWidget(self.memory_service, self.content_area)
         self.stacked_widget.addWidget(self.memory_view)
 
-        # 6: Settings View
+        # 7: Settings View
         self._setup_settings_view()
         self.stacked_widget.addWidget(self.settings_view)
 
@@ -271,15 +279,17 @@ class JarvisMainWindow(QMainWindow):
         """Updates active sidebar button styling and refreshes view data."""
         self._update_sidebar_styles(index)
         if index == 1:
-            self.email_view.update_auth_status()
+            self.alert_view.refresh_alerts()
         elif index == 2:
-            self.whatsapp_view.refresh_all()
+            self.email_view.update_auth_status()
         elif index == 3:
+            self.whatsapp_view.refresh_all()
+        elif index == 4:
             self.automation_view.refresh_system_status()
             self.automation_view.refresh_audit_log()
-        elif index == 4:
-            self.task_view.refresh_tasks()
         elif index == 5:
+            self.task_view.refresh_tasks()
+        elif index == 6:
             self.memory_view.refresh_memories()
 
     def _update_sidebar_styles(self, active_index):

@@ -36,6 +36,7 @@ from qasync import asyncSlot
 
 from automation_service import APPROVED_APPS, PRESET_WORKFLOWS, WindowsAutomationService
 from gmail_service import EmailDetail, EmailSummary, GmailService, generate_reply_draft, summarize_and_classify_email
+from alert_service import AlertNotification, AlertNotificationService
 from whatsapp_service import ImportantContact, WhatsAppMessage, WhatsAppNotificationListener, WhatsAppService
 from gui_components import LiquidGlassCard
 from memory_service import MemoryService
@@ -1139,7 +1140,257 @@ class EmailManagementWidget(QWidget):
 
 
 # ----------------------------------------------------------------------
-# 4. WHATSAPP PERSONAL COMPANION WIDGET
+# 4. NOTIFICATION INTELLIGENCE & ALERT CENTER WIDGET
+# ----------------------------------------------------------------------
+
+class NotificationCenterWidget(QWidget):
+    """
+    Centralized Alert Center View.
+    Aggregates, ranks, sorts, and displays WhatsApp & Gmail notifications.
+    Supports source/category/urgency filtering, search, mark read, and dismissal controls.
+    """
+
+    def __init__(self, alert_service: AlertNotificationService, parent=None):
+        super().__init__(parent)
+        self.alert_service = alert_service
+        self._setup_ui()
+        self.refresh_alerts()
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(12)
+
+        # Header Card
+        header_card = LiquidGlassCard(self, corner_radius=18)
+        header_layout = QHBoxLayout(header_card)
+        header_layout.setContentsMargins(18, 12, 18, 12)
+
+        title_box = QVBoxLayout()
+        title = QLabel("<h2 style='color: #00C8FF; margin: 0;'>Notification Intelligence & Alert Center</h2>")
+        self.status_lbl = QLabel("Aggregated intelligence feed across WhatsApp Desktop and Gmail")
+        self.status_lbl.setStyleSheet("color: #A0AEC0; font-size: 13px;")
+        title_box.addWidget(title)
+        title_box.addWidget(self.status_lbl)
+        header_layout.addLayout(title_box)
+
+        header_layout.addStretch()
+
+        self.critical_badge = QLabel(" 0 CRITICAL ")
+        self.critical_badge.setStyleSheet("background: rgba(255, 68, 68, 40); color: #FF4444; border: 1px solid #FF4444; border-radius: 6px; font-weight: bold; padding: 4px 8px;")
+        header_layout.addWidget(self.critical_badge)
+
+        self.unread_badge = QLabel(" 0 UNREAD ")
+        self.unread_badge.setStyleSheet("background: rgba(0, 200, 255, 40); color: #00C8FF; border: 1px solid #00C8FF; border-radius: 6px; font-weight: bold; padding: 4px 8px;")
+        header_layout.addWidget(self.unread_badge)
+
+        refresh_btn = QPushButton("🔄 Refresh Feed")
+        refresh_btn.setCursor(Qt.PointingHandCursor)
+        refresh_btn.clicked.connect(self.refresh_alerts)
+        header_layout.addWidget(refresh_btn)
+
+        layout.addWidget(header_card)
+
+        # Filter & Action Bar
+        filter_card = LiquidGlassCard(self, corner_radius=16)
+        f_layout = QHBoxLayout(filter_card)
+        f_layout.setContentsMargins(14, 10, 14, 10)
+        f_layout.setSpacing(8)
+
+        self.search_in = QLineEdit()
+        self.search_in.setPlaceholderText("🔍 Search alerts...")
+        self.search_in.setFixedHeight(32)
+        self.search_in.textChanged.connect(self.refresh_alerts)
+        f_layout.addWidget(self.search_in, stretch=2)
+
+        self.source_combo = QComboBox()
+        self.source_combo.addItems(["All Sources", "WhatsApp", "Gmail"])
+        self.source_combo.setFixedHeight(32)
+        self.source_combo.currentIndexChanged.connect(self.refresh_alerts)
+        f_layout.addWidget(self.source_combo, stretch=1)
+
+        self.cat_combo = QComboBox()
+        self.cat_combo.addItems(["All Categories", "Work", "Family", "VIP", "Email", "General"])
+        self.cat_combo.setFixedHeight(32)
+        self.cat_combo.currentIndexChanged.connect(self.refresh_alerts)
+        f_layout.addWidget(self.cat_combo, stretch=1)
+
+        self.urgency_combo = QComboBox()
+        self.urgency_combo.addItems(["All Urgencies", "CRITICAL", "HIGH", "NORMAL", "LOW"])
+        self.urgency_combo.setFixedHeight(32)
+        self.urgency_combo.currentIndexChanged.connect(self.refresh_alerts)
+        f_layout.addWidget(self.urgency_combo, stretch=1)
+
+        self.unread_chk = QCheckBox("Unread Only")
+        self.unread_chk.toggled.connect(self.refresh_alerts)
+        f_layout.addWidget(self.unread_chk)
+
+        mark_all_btn = QPushButton("✓ Mark All Read")
+        mark_all_btn.setFixedHeight(32)
+        mark_all_btn.setCursor(Qt.PointingHandCursor)
+        mark_all_btn.clicked.connect(self._mark_all_read_action)
+        f_layout.addWidget(mark_all_btn)
+
+        clear_btn = QPushButton("🗑️ Clear")
+        clear_btn.setFixedHeight(32)
+        clear_btn.setCursor(Qt.PointingHandCursor)
+        clear_btn.setStyleSheet("color: #FF6B6B;")
+        clear_btn.clicked.connect(self._clear_history_action)
+        f_layout.addWidget(clear_btn)
+
+        layout.addWidget(filter_card)
+
+        # Scrollable Feed Container
+        self.scroll_area = QScrollArea(self)
+        self.scroll_area.setWidgetResizable(True)
+        self.alert_list_container = QWidget()
+        self.alert_list_layout = QVBoxLayout(self.alert_list_container)
+        self.alert_list_layout.setContentsMargins(0, 0, 0, 0)
+        self.alert_list_layout.setSpacing(8)
+        self.alert_list_layout.addStretch()
+        self.scroll_area.setWidget(self.alert_list_container)
+
+        layout.addWidget(self.scroll_area, stretch=1)
+
+    def refresh_alerts(self):
+        while self.alert_list_layout.count() > 1:
+            child = self.alert_list_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+
+        src = self.source_combo.currentText()
+        source_filter = None if src == "All Sources" else src
+
+        cat = self.cat_combo.currentText()
+        cat_filter = None if cat == "All Categories" else cat
+
+        urg = self.urgency_combo.currentText()
+        urgency_filter = None if urg == "All Urgencies" else urg.lower()
+
+        search = self.search_in.text().strip() or None
+        unread = self.unread_chk.isChecked()
+
+        alerts = self.alert_service.get_alerts(
+            source_filter=source_filter,
+            category_filter=cat_filter,
+            urgency_filter=urgency_filter,
+            unread_only=unread,
+            search_query=search,
+        )
+
+        unread_cnt = self.alert_service.get_unread_count()
+        critical_cnt = self.alert_service.get_critical_count()
+        self.unread_badge.setText(f" {unread_cnt} UNREAD ")
+        self.critical_badge.setText(f" {critical_cnt} CRITICAL/HIGH ")
+
+        if not alerts:
+            empty = QLabel("<p style='color: #718096; text-align: center; margin: 40px;'>No alert notifications matching criteria.</p>")
+            empty.setAlignment(Qt.AlignCenter)
+            self.alert_list_layout.insertWidget(0, empty)
+            return
+
+        for alert in alerts:
+            card = self._create_alert_card(alert)
+            self.alert_list_layout.insertWidget(self.alert_list_layout.count() - 1, card)
+
+    def _create_alert_card(self, alert: AlertNotification) -> QWidget:
+        is_high = alert.urgency in ("critical", "high")
+        card = LiquidGlassCard(self.alert_list_container, corner_radius=14)
+
+        if is_high and not alert.is_read:
+            card.setStyleSheet("background-color: rgba(255, 68, 68, 25); border: 1px solid rgba(255, 68, 68, 120);")
+
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(14, 10, 14, 10)
+        layout.setSpacing(6)
+
+        top = QHBoxLayout()
+        icon = "📱" if alert.source == "WhatsApp" else "📧"
+        src_lbl = QLabel(f"<b>{icon} {alert.source}</b>")
+        src_lbl.setStyleSheet("color: #00C8FF; font-size: 12px;")
+        top.addWidget(src_lbl)
+
+        cat_lbl = QLabel(f"[{alert.category}]")
+        cat_lbl.setStyleSheet("color: #A0AEC0; font-size: 11px;")
+        top.addWidget(cat_lbl)
+
+        sender_lbl = QLabel(f"<b>{alert.sender}</b>")
+        sender_lbl.setStyleSheet("color: #F0F4F8; font-size: 13px;")
+        top.addWidget(sender_lbl, stretch=1)
+
+        time_lbl = QLabel(alert.timestamp[:19] if len(alert.timestamp) > 19 else alert.timestamp)
+        time_lbl.setStyleSheet("color: #718096; font-size: 11px;")
+        top.addWidget(time_lbl)
+
+        u_cols = {"critical": "#FF4444", "high": "#FFAA00", "normal": "#00C8FF", "low": "#7FFFD4"}
+        u_col = u_cols.get(alert.urgency.lower(), "#7FFFD4")
+        u_badge = QLabel(f" {alert.urgency.upper()} ")
+        u_badge.setStyleSheet(f"color: {u_col}; border: 1px solid {u_col}; border-radius: 4px; font-size: 10px; font-weight: bold;")
+        top.addWidget(u_badge)
+
+        layout.addLayout(top)
+
+        title_style = "font-weight: bold; color: #E2E8F0;" if not alert.is_read else "color: #A0AEC0;"
+        title_lbl = QLabel(f"<span style='{title_style} font-size: 13px;'>{alert.title}</span>")
+        layout.addWidget(title_lbl)
+
+        body_lbl = QLabel(alert.body_preview)
+        body_lbl.setStyleSheet("color: #CBD5E0; font-size: 12px;")
+        body_lbl.setWordWrap(True)
+        layout.addWidget(body_lbl)
+
+        if alert.summary:
+            sum_lbl = QLabel(f"<i style='color: #7FFFD4; font-size: 11px;'>AI Summary: {alert.summary}</i>")
+            sum_lbl.setWordWrap(True)
+            layout.addWidget(sum_lbl)
+
+        bot_row = QHBoxLayout()
+        bot_row.addStretch()
+
+        if not alert.is_read:
+            read_btn = QPushButton("✓ Mark Read")
+            read_btn.setFixedHeight(26)
+            read_btn.setCursor(Qt.PointingHandCursor)
+            read_btn.clicked.connect(lambda _, aid=alert.id: self._mark_read_action(aid))
+            bot_row.addWidget(read_btn)
+
+        dismiss_btn = QPushButton("Dismiss")
+        dismiss_btn.setFixedHeight(26)
+        dismiss_btn.setCursor(Qt.PointingHandCursor)
+        dismiss_btn.clicked.connect(lambda _, aid=alert.id: self._dismiss_action(aid))
+        bot_row.addWidget(dismiss_btn)
+
+        layout.addLayout(bot_row)
+        return card
+
+    def _mark_read_action(self, alert_id: str):
+        self.alert_service.mark_as_read(alert_id)
+        self.refresh_alerts()
+
+    def _dismiss_action(self, alert_id: str):
+        self.alert_service.dismiss_alert(alert_id)
+        self.refresh_alerts()
+
+    def _mark_all_read_action(self):
+        count = self.alert_service.mark_all_as_read()
+        self.refresh_alerts()
+        show_info_message("Alert Center", f"Marked {count} notifications as read.")
+
+    def _clear_history_action(self):
+        reply = QMessageBox.question(
+            self,
+            "Clear Alert Center",
+            "Are you sure you want to clear all notification history?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply == QMessageBox.Yes:
+            self.alert_service.clear_history()
+            self.refresh_alerts()
+
+
+# ----------------------------------------------------------------------
+# 5. WHATSAPP PERSONAL COMPANION WIDGET
 # ----------------------------------------------------------------------
 
 class WhatsAppCompanionWidget(QWidget):
@@ -1527,6 +1778,13 @@ class WhatsAppCompanionWidget(QWidget):
             msg = await asyncio.to_thread(
                 self.whatsapp_service.import_and_analyze_message, sender, text, ai_prov
             )
+            # Sync to Alert Center if alert_service is available on main window
+            alert_svc = getattr(self.window(), "alert_service", None)
+            if alert_svc:
+                matched_contact, contact_pri = self.whatsapp_service.match_contact(sender)
+                cat = matched_contact.category if matched_contact else "General"
+                alert_svc.add_whatsapp_alert(msg, category=cat, contact_priority=contact_pri)
+
             self.sender_in.clear()
             self.msg_text_in.clear()
             self.refresh_history()

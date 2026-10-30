@@ -1,5 +1,5 @@
 """
-Main application entry point for G-AI-ASSISTANT (JARVIS AI).
+Main application entry point for S.E.N.T.I.A.L.
 Initializes PySide6 application, qasync event loop, logging, and launches the main window.
 """
 
@@ -28,23 +28,23 @@ def set_windows_app_id():
     """Sets Windows AppUserModelID for proper taskbar icon handling."""
     if sys.platform == "win32":
         try:
-            myappid = "g_ai_assistant.jarvis.desktop.v1"
+            myappid = "sential.desktop.v2"
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
         except Exception as e:
             logger.debug(f"Could not set AppUserModelID: {e}")
 
 
 def main():
-    """Entry point for G-AI-ASSISTANT."""
+    """Entry point for S.E.N.T.I.A.L."""
     setup_logging(level=logging.INFO)
-    logger.info("Starting G-AI-ASSISTANT Desktop Application...")
+    logger.info("Starting S.E.N.T.I.A.L. Desktop Application...")
 
     set_windows_app_id()
 
     # Create PySide6 Application
     app = QApplication(sys.argv)
-    app.setApplicationName("JARVIS AI")
-    app.setOrganizationName("G-AI-Assistant")
+    app.setApplicationName("S.E.N.T.I.A.L.")
+    app.setOrganizationName("S.E.N.T.I.A.L.")
 
     # Integrate Qt event loop with asyncio via qasync
     loop = qasync.QEventLoop(app)

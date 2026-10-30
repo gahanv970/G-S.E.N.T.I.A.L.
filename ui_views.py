@@ -1,5 +1,5 @@
 """
-Rich Liquid Glass UI Views for G-AI-ASSISTANT (JARVIS AI).
+Anime Cyberpunk UI Views for S.E.N.T.I.A.L.
 Contains dedicated, fully-functional view widgets for:
 - Task Management (TaskManagementWidget)
 - Memory & Personalization (MemoryManagementWidget)
@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
+    QFileDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -32,6 +33,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+import shutil
+from PySide6.QtCore import QTimer, QTime, QDate
 from qasync import asyncSlot
 
 from automation_service import APPROVED_APPS, PRESET_WORKFLOWS, WindowsAutomationService
@@ -46,6 +49,204 @@ from task_service import Task, TaskService
 from utils import show_error_message, show_info_message
 
 logger = logging.getLogger(__name__)
+
+
+# ----------------------------------------------------------------------
+# 0. MAIN DASHBOARD WIDGET (S.E.N.T.I.A.L. HOME)
+# ----------------------------------------------------------------------
+
+class MainDashboardWidget(QWidget):
+    """
+    Polished Home Dashboard for S.E.N.T.I.A.L.
+    Features core status, voice toggle, digital clock/date, quick action tiles,
+    live connection indicators (Gemini & ElevenLabs), recent activity, and workflow status.
+    Lightweight and optimized for Intel HD Graphics 530 at 1366x768.
+    """
+
+    quick_action_triggered = Signal(int)  # Emits target tab page index
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._clock_timer = QTimer(self)
+        self._clock_timer.timeout.connect(self._update_clock)
+        self._setup_ui()
+        self._clock_timer.start(1000)
+        self._update_clock()
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(12)
+
+        # 1. Top Identity & Live Clock Banner Card
+        top_card = LiquidGlassCard(self, corner_radius=18, border_color=QColor(255, 42, 109, 150))
+        top_layout = QHBoxLayout(top_card)
+        top_layout.setContentsMargins(20, 14, 20, 14)
+
+        identity_box = QVBoxLayout()
+        hdr_title = QLabel("S.E.N.T.I.A.L.")
+        hdr_title.setObjectName("hdrAnimeTitle")
+        hdr_title.setStyleSheet("font-size: 24px; font-weight: bold; color: #FF2A6D; letter-spacing: 2px;")
+
+        hdr_sub = QLabel("Smart Electronic Networked Telemetric Intelligence & Autonomous Liaison")
+        hdr_sub.setStyleSheet("font-size: 11px; color: #05D9E8; font-weight: 600;")
+
+        identity_box.addWidget(hdr_title)
+        identity_box.addWidget(hdr_sub)
+        top_layout.addLayout(identity_box)
+
+        top_layout.addStretch()
+
+        # Clock & Date Box
+        clock_box = QVBoxLayout()
+        clock_box.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.time_lbl = QLabel("00:00:00")
+        self.time_lbl.setStyleSheet("font-size: 22px; font-weight: bold; color: #05D9E8; font-family: 'Consolas', monospace;")
+        self.date_lbl = QLabel("2025-01-01")
+        self.date_lbl.setStyleSheet("font-size: 11px; color: #A0AEC0; font-weight: 600;")
+        clock_box.addWidget(self.time_lbl, alignment=Qt.AlignRight)
+        clock_box.addWidget(self.date_lbl, alignment=Qt.AlignRight)
+        top_layout.addLayout(clock_box)
+
+        layout.addWidget(top_card)
+
+        # 2. Status Indicators Row Card (Gemini AI, ElevenLabs TTS, Voice Activation, Active Workflow)
+        status_card = LiquidGlassCard(self, corner_radius=16, border_color=QColor(5, 217, 232, 120))
+        status_layout = QHBoxLayout(status_card)
+        status_layout.setContentsMargins(16, 10, 16, 10)
+        status_layout.setSpacing(12)
+
+        # Gemini Indicator
+        self.gemini_ind = QLabel("● Gemini AI: Checking...")
+        self.gemini_ind.setStyleSheet("color: #05D9E8; font-weight: bold; font-size: 12px;")
+        status_layout.addWidget(self.gemini_ind)
+
+        # ElevenLabs Indicator
+        self.eleven_ind = QLabel("● ElevenLabs TTS: Ready")
+        self.eleven_ind.setStyleSheet("color: #9D4EDD; font-weight: bold; font-size: 12px;")
+        status_layout.addWidget(self.eleven_ind)
+
+        # Voice Activation Toggle Status
+        self.voice_act_ind = QLabel("● Voice Input: Idle")
+        self.voice_act_ind.setStyleSheet("color: #A0AEC0; font-size: 12px;")
+        status_layout.addWidget(self.voice_act_ind)
+
+        # Workflow Status
+        self.wf_ind = QLabel("● Workflow: Standby")
+        self.wf_ind.setStyleSheet("color: #A0AEC0; font-size: 12px;")
+        status_layout.addWidget(self.wf_ind)
+
+        status_layout.addStretch()
+        layout.addWidget(status_card)
+
+        # 3. Middle Section: Quick Action Tiles & Notification Summary
+        mid_layout = QHBoxLayout()
+        mid_layout.setSpacing(12)
+
+        # Quick Actions Card
+        qa_card = LiquidGlassCard(self, corner_radius=16)
+        qa_layout = QVBoxLayout(qa_card)
+        qa_layout.setContentsMargins(16, 14, 16, 14)
+        qa_layout.setSpacing(10)
+
+        qa_title = QLabel("⚡ QUICK ACTIONS")
+        qa_title.setStyleSheet("font-size: 13px; font-weight: bold; color: #FF2A6D;")
+        qa_layout.addWidget(qa_title)
+
+        grid = QGridLayout()
+        grid.setSpacing(8)
+
+        btn_chat = QPushButton("💬 Open Voice Chat")
+        btn_chat.setObjectName("btnPrimary")
+        btn_chat.clicked.connect(lambda: self.quick_action_triggered.emit(1))
+        grid.addWidget(btn_chat, 0, 0)
+
+        btn_alerts = QPushButton("🔔 Notification Center")
+        btn_alerts.clicked.connect(lambda: self.quick_action_triggered.emit(2))
+        grid.addWidget(btn_alerts, 0, 1)
+
+        btn_wf = QPushButton("⚡ Execute Workflows")
+        btn_wf.clicked.connect(lambda: self.quick_action_triggered.emit(3))
+        grid.addWidget(btn_wf, 1, 0)
+
+        btn_email = QPushButton("📧 Gmail Control")
+        btn_email.clicked.connect(lambda: self.quick_action_triggered.emit(4))
+        grid.addWidget(btn_email, 1, 1)
+
+        btn_wa = QPushButton("📱 WhatsApp Companion")
+        btn_wa.clicked.connect(lambda: self.quick_action_triggered.emit(5))
+        grid.addWidget(btn_wa, 2, 0)
+
+        btn_auto = QPushButton("⚙️ Windows Automation")
+        btn_auto.clicked.connect(lambda: self.quick_action_triggered.emit(6))
+        grid.addWidget(btn_auto, 2, 1)
+
+        qa_layout.addLayout(grid)
+        mid_layout.addWidget(qa_card, stretch=1)
+
+        # Notification & Intelligence Summary Card
+        sum_card = LiquidGlassCard(self, corner_radius=16)
+        sum_layout = QVBoxLayout(sum_card)
+        sum_layout.setContentsMargins(16, 14, 16, 14)
+        sum_layout.setSpacing(8)
+
+        sum_title = QLabel("📊 INTELLIGENCE SUMMARY")
+        sum_title.setStyleSheet("font-size: 13px; font-weight: bold; color: #05D9E8;")
+        sum_layout.addWidget(sum_title)
+
+        self.unread_summary_lbl = QLabel("• 0 Unread Notifications")
+        self.unread_summary_lbl.setStyleSheet("color: #E2E8F0; font-size: 12px;")
+        sum_layout.addWidget(self.unread_summary_lbl)
+
+        self.critical_summary_lbl = QLabel("• 0 Critical Urgent Alerts")
+        self.critical_summary_lbl.setStyleSheet("color: #FF2A6D; font-size: 12px; font-weight: bold;")
+        sum_layout.addWidget(self.critical_summary_lbl)
+
+        self.task_summary_lbl = QLabel("• 0 Pending Tasks")
+        self.task_summary_lbl.setStyleSheet("color: #A0AEC0; font-size: 12px;")
+        sum_layout.addWidget(self.task_summary_lbl)
+
+        self.memory_summary_lbl = QLabel("• Long-Term Memory Active")
+        self.memory_summary_lbl.setStyleSheet("color: #7FFFD4; font-size: 12px;")
+        sum_layout.addWidget(self.memory_summary_lbl)
+
+        sum_layout.addStretch()
+        mid_layout.addWidget(sum_card, stretch=1)
+
+        layout.addLayout(mid_layout)
+
+        # 4. Activity Log Feed Card
+        log_card = LiquidGlassCard(self, corner_radius=16)
+        log_layout = QVBoxLayout(log_card)
+        log_layout.setContentsMargins(16, 12, 16, 12)
+        log_layout.setSpacing(6)
+
+        log_title = QLabel("📡 SYSTEM RECENT ACTIVITY LOG")
+        log_title.setStyleSheet("font-size: 12px; font-weight: bold; color: #9D4EDD;")
+        log_layout.addWidget(log_title)
+
+        self.activity_log_display = QTextEdit()
+        self.activity_log_display.setReadOnly(True)
+        self.activity_log_display.setFixedHeight(110)
+        self.activity_log_display.setStyleSheet("background-color: rgba(11, 12, 16, 0.9); font-family: Consolas, monospace; font-size: 11px; color: #05D9E8; border: 1px solid rgba(5, 217, 232, 0.2);")
+        self.activity_log_display.setText(f"[{datetime.now().strftime('%H:%M:%S')}] S.E.N.T.I.A.L. Core System Initialized.\n[{datetime.now().strftime('%H:%M:%S')}] Anime Cyberpunk Interface Loaded.")
+        log_layout.addWidget(self.activity_log_display)
+
+        layout.addWidget(log_card, stretch=1)
+
+    def _update_clock(self):
+        now_time = QTime.currentTime().toString("hh:mm:ss")
+        now_date = QDate.currentDate().toString("yyyy-MM-dd dddd")
+        self.time_lbl.setText(now_time)
+        self.date_lbl.setText(now_date)
+
+    def append_activity(self, text: str):
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.activity_log_display.append(f"[{timestamp}] {text}")
+
+    def update_indicators(self, gemini_status: str, voice_status: str):
+        self.gemini_ind.setText(f"● Gemini AI: {gemini_status}")
+        self.eleven_ind.setText(f"● ElevenLabs: {voice_status}")
 
 
 # ----------------------------------------------------------------------
@@ -647,6 +848,11 @@ class EmailManagementWidget(QWidget):
         self.auth_btn.clicked.connect(self._toggle_auth)
         header_layout.addWidget(self.auth_btn)
 
+        self.import_creds_btn = QPushButton("📁 Import OAuth JSON")
+        self.import_creds_btn.setCursor(Qt.PointingHandCursor)
+        self.import_creds_btn.clicked.connect(self._import_credentials_json)
+        header_layout.addWidget(self.import_creds_btn)
+
         self.setup_help_btn = QPushButton("OAuth Setup Guide")
         self.setup_help_btn.setCursor(Qt.PointingHandCursor)
         self.setup_help_btn.clicked.connect(self._show_oauth_guide)
@@ -813,6 +1019,20 @@ class EmailManagementWidget(QWidget):
             except Exception as e:
                 show_error_message("OAuth Authentication Failed", str(e))
 
+    def _import_credentials_json(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Select Google OAuth Client Secrets JSON", "", "JSON Files (*.json)"
+        )
+        if file_path:
+            try:
+                dest = self.gmail_service.get_credentials_path()
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy(file_path, dest)
+                show_info_message("Credentials Imported", f"OAuth credentials imported successfully to:\n{dest}")
+                self.update_auth_status()
+            except Exception as e:
+                show_error_message("Import Error", f"Failed to import credentials: {e}")
+
     def _show_oauth_guide(self):
         guide = (
             "<h3>Google Gmail OAuth Setup Guide</h3>"
@@ -821,8 +1041,8 @@ class EmailManagementWidget(QWidget):
             "<li>Create a project and enable the <b>Gmail API</b>.</li>"
             "<li>Configure the OAuth consent screen (Desktop App).</li>"
             "<li>Create credentials: <b>OAuth client ID</b> > <b>Desktop app</b>.</li>"
-            "<li>Download JSON and save it as:<br><code>data/gmail_credentials.json</code> inside the project folder.</li>"
-            "<li>Click <b>Connect Account</b> to complete browser authentication.</li>"
+            "<li>Download the JSON file and click <b>Import OAuth JSON</b> above (or place it manually at <code>data/gmail_credentials.json</code>).</li>"
+            "<li>Click <b>Connect Account</b> to complete browser authorization.</li>"
             "</ol>"
         )
         dlg = QMessageBox(self)

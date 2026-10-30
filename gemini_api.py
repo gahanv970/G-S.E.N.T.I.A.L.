@@ -69,18 +69,29 @@ def validate_intent_output(data: Dict[str, Any]) -> Dict[str, Any]:
         app_id = str(params.get("app_id", "")).strip().lower()
         from automation_service import APPROVED_APPS
         if app_id not in APPROVED_APPS:
-            intent_type = "general_chat"
-            response_text = f"Access Denied: Application '{app_id}' is not in the approved allowlist."
-            params = {}
+            # Check for YouTube, Fast.com, or general websites accidentally categorized as launch_app
+            if "youtube" in app_id or "fast.com" in app_id or "http" in app_id:
+                intent_type = "open_url"
+                if "youtube" in app_id:
+                    params["url"] = "https://www.youtube.com"
+                elif "fast.com" in app_id:
+                    params["url"] = "https://fast.com"
+            else:
+                intent_type = "general_chat"
+                response_text = f"Access Denied: Application '{app_id}' is not in the approved allowlist."
+                params = {}
         else:
             requires_confirmation = True
 
-    elif intent_type in ("open_url", "extract_web_text"):
+    if intent_type in ("open_url", "extract_web_text"):
         url = str(params.get("url", "")).strip()
         if ":" in url and not url.lower().startswith(("http://", "https://")):
             intent_type = "general_chat"
             response_text = "Security violation: Only HTTP and HTTPS URLs are permitted."
             params = {}
+        elif not url.lower().startswith(("http://", "https://")):
+            url = f"https://{url}" if url else "https://www.google.com"
+            params["url"] = url
 
     elif intent_type == "open_path":
         raw_path = str(params.get("path", "") or params.get("file_or_folder_path", "")).strip()
@@ -282,7 +293,7 @@ class GeminiAIProvider:
 
         # Prepare system instruction
         base_instruction = (
-            "You are JARVIS, an advanced, capable, helpful, and polite Windows AI desktop assistant. "
+            "You are S.E.N.T.I.A.L., an advanced, capable, helpful, and polite Windows AI desktop assistant. "
             "Provide clear, concise, accurate, and actionable answers."
         )
         if system_context:

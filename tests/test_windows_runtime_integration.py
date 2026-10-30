@@ -72,13 +72,13 @@ def test_gmail_oauth_runtime_unauthenticated_state():
 
 def test_jarvis_main_window_startup_and_navigation(app):
     win = JarvisMainWindow()
-    assert win.windowTitle().startswith("JARVIS AI")
+    assert win.windowTitle().startswith("S.E.N.T.I.A.L.")
 
-    # Verify all 9 pages exist in stacked widget
-    assert win.stacked_widget.count() == 9
+    # Verify all 10 pages exist in stacked widget (Dashboard + 9 feature pages)
+    assert win.stacked_widget.count() == 10
 
     # Test page navigation
-    for page_idx in range(9):
+    for page_idx in range(10):
         win.stacked_widget.setCurrentIndex(page_idx)
         assert win.stacked_widget.currentIndex() == page_idx
 

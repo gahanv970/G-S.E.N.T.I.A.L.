@@ -10,7 +10,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -35,7 +35,7 @@ from browser_service import BrowserAutomationService
 from config import APP_DIR, get_config_value, get_secret, load_config, save_config, set_secret
 from gemini_api import DEFAULT_MODEL, SUPPORTED_MODELS, GeminiAIProvider
 from gmail_service import GmailService
-from gui_components import LiquidGlassBackground, LiquidGlassCard
+from gui_components import ANIME_CYBERPUNK_QSS, LiquidGlassBackground, LiquidGlassCard
 from memory_service import MemoryService
 from microphone_service import MicrophoneService, transcribe_audio_bytes
 from task_service import TaskService
@@ -44,6 +44,7 @@ from workflow_engine import WorkflowEngine
 from ui_views import (
     AutomationManagementWidget,
     EmailManagementWidget,
+    MainDashboardWidget,
     MemoryManagementWidget,
     NotificationCenterWidget,
     TaskManagementWidget,
@@ -61,16 +62,16 @@ MASKED_KEY = "********"
 
 class JarvisMainWindow(QMainWindow):
     """
-    The main window for the JARVIS AI desktop assistant, featuring a Liquid Glass UI.
-    Houses Chat, Email, Automation, Tasks, Memory, and Settings views.
+    The main window for S.E.N.T.I.A.L. Desktop Assistant, featuring an anime-inspired cyberpunk UI.
+    Houses Home Dashboard, Voice Chat, Alerts, Workflows, Email, WhatsApp, Automation, Tasks, Memory, and Settings views.
     """
 
     ai_state_changed = Signal(str)  # Updates the AI core visualization state
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("JARVIS AI Assistant - Personal Desktop Intelligence")
-        self.resize(1200, 800)
+        self.setWindowTitle("S.E.N.T.I.A.L. | Personal Desktop Intelligence")
+        self.resize(1240, 810)
         self.setMinimumSize(1024, 768)
 
         # Initialize Services
@@ -98,7 +99,7 @@ class JarvisMainWindow(QMainWindow):
         self.voice_manager = VoiceManager()
         self.mic_service = MicrophoneService(self)
 
-        self.conversation_history = []  # list of (role, text) tuples, role in {"User", "JARVIS"}
+        self.conversation_history = []  # list of (role, text) tuples, role in {"User", "S.E.N.T.I.A.L."}
         self._busy = False
         self._sidebar_buttons = []
 
@@ -111,12 +112,12 @@ class JarvisMainWindow(QMainWindow):
         self._load_settings()
 
         self.ai_state_changed.emit("idle")
-        logger.info("JARVIS AI application initialized successfully.")
+        logger.info("S.E.N.T.I.A.L. application initialized successfully.")
 
     # ------------------------------------------------------------------ UI Setup
 
     def _setup_ui(self):
-        """Initializes the Liquid Glass GUI components and layout."""
+        """Initializes the S.E.N.T.I.A.L. Anime Cyberpunk GUI components and layout."""
         self.background_widget = LiquidGlassBackground(self)
         self.setCentralWidget(self.background_widget)
 
@@ -125,29 +126,31 @@ class JarvisMainWindow(QMainWindow):
         self.root_layout.setSpacing(15)
 
         # --- Left sidebar (navigation) ---
-        self.sidebar = LiquidGlassCard(self.background_widget, corner_radius=24)
+        self.sidebar = LiquidGlassCard(self.background_widget, corner_radius=20, border_color=QColor(255, 42, 109, 120))
         self.sidebar.setFixedWidth(210)
         sidebar_layout = QVBoxLayout(self.sidebar)
-        sidebar_layout.setContentsMargins(12, 24, 12, 18)
-        sidebar_layout.setSpacing(10)
+        sidebar_layout.setContentsMargins(12, 20, 12, 18)
+        sidebar_layout.setSpacing(8)
 
         # App Title in Sidebar
-        app_title = QLabel("JARVIS AI")
+        app_title = QLabel("S.E.N.T.I.A.L.")
+        app_title.setObjectName("hdrAnimeTitle")
         app_title.setAlignment(Qt.AlignCenter)
         app_title.setFont(QFont("Segoe UI", 16, QFont.Bold))
-        app_title.setStyleSheet("color: #00C8FF; margin-bottom: 15px;")
+        app_title.setStyleSheet("color: #FF2A6D; margin-bottom: 10px; letter-spacing: 2px;")
         sidebar_layout.addWidget(app_title)
 
         nav_items = [
-            ("💬 Chat", 0),
-            ("🔔 Alerts", 1),
-            ("⚡ Workflows", 2),
-            ("📧 Email", 3),
-            ("📱 WhatsApp", 4),
-            ("⚙️ Automation", 5),
-            ("📋 Tasks", 6),
-            ("🧠 Memory", 7),
-            ("⚙️ Settings", 8),
+            ("🏠 Dashboard", 0),
+            ("💬 Chat", 1),
+            ("🔔 Alerts", 2),
+            ("⚡ Workflows", 3),
+            ("📧 Email", 4),
+            ("📱 WhatsApp", 5),
+            ("⚙️ Automation", 6),
+            ("📋 Tasks", 7),
+            ("🧠 Memory", 8),
+            ("⚙️ Settings", 9),
         ]
 
         for text, index in nav_items:
@@ -157,9 +160,9 @@ class JarvisMainWindow(QMainWindow):
         sidebar_layout.addStretch()
 
         # Version stamp
-        ver_lbl = QLabel("v2.0 Liquid Glass")
+        ver_lbl = QLabel("v2.5 S.E.N.T.I.A.L.")
         ver_lbl.setAlignment(Qt.AlignCenter)
-        ver_lbl.setStyleSheet("color: #4A5568; font-size: 11px;")
+        ver_lbl.setStyleSheet("color: #05D9E8; font-size: 11px; font-weight: bold;")
         sidebar_layout.addWidget(ver_lbl)
 
         self.root_layout.addWidget(self.sidebar)
@@ -173,23 +176,28 @@ class JarvisMainWindow(QMainWindow):
         self.stacked_widget = QStackedWidget(self.content_area)
         self.content_layout.addWidget(self.stacked_widget)
 
-        # 0: Chat View
+        # 0: Main Home Dashboard View
+        self.dashboard_view = MainDashboardWidget(self.content_area)
+        self.dashboard_view.quick_action_triggered.connect(self.stacked_widget.setCurrentIndex)
+        self.stacked_widget.addWidget(self.dashboard_view)
+
+        # 1: Chat View
         self._setup_chat_view()
         self.stacked_widget.addWidget(self.chat_view)
 
-        # 1: Alert Notification Center View
+        # 2: Alert Notification Center View
         self.alert_view = NotificationCenterWidget(self.alert_service, self.content_area)
         self.stacked_widget.addWidget(self.alert_view)
 
-        # 2: Intelligent Workflow Orchestration View
+        # 3: Intelligent Workflow Orchestration View
         self.workflow_view = WorkflowOrchestrationWidget(self.workflow_engine, self.content_area)
         self.stacked_widget.addWidget(self.workflow_view)
 
-        # 3: Email View
+        # 4: Email View
         self.email_view = EmailManagementWidget(self.gmail_service, self.content_area)
         self.stacked_widget.addWidget(self.email_view)
 
-        # 4: WhatsApp Personal Companion View
+        # 5: WhatsApp Personal Companion View
         self.whatsapp_view = WhatsAppCompanionWidget(
             self.whatsapp_service,
             notification_listener=self.whatsapp_listener,
@@ -197,7 +205,7 @@ class JarvisMainWindow(QMainWindow):
         )
         self.stacked_widget.addWidget(self.whatsapp_view)
 
-        # 5: Windows & Browser Automation View
+        # 6: Windows & Browser Automation View
         self.automation_view = AutomationManagementWidget(
             self.automation_service,
             browser_service=self.browser_service,
@@ -205,15 +213,15 @@ class JarvisMainWindow(QMainWindow):
         )
         self.stacked_widget.addWidget(self.automation_view)
 
-        # 6: Task Management View
+        # 7: Task Management View
         self.task_view = TaskManagementWidget(self.task_service, self.content_area)
         self.stacked_widget.addWidget(self.task_view)
 
-        # 7: Memory & Personalization View
+        # 8: Memory & Personalization View
         self.memory_view = MemoryManagementWidget(self.memory_service, self.content_area)
         self.stacked_widget.addWidget(self.memory_view)
 
-        # 8: Settings View
+        # 9: Settings View
         self._setup_settings_view()
         self.stacked_widget.addWidget(self.settings_view)
 
@@ -223,71 +231,8 @@ class JarvisMainWindow(QMainWindow):
         # Set initial active tab
         self._update_sidebar_styles(0)
 
-        self.setStyleSheet("""
-            QMainWindow {
-                background: transparent;
-            }
-            QLabel, QPushButton, QLineEdit, QTextEdit, QComboBox, QCheckBox {
-                font-family: 'Segoe UI', 'Roboto', sans-serif;
-                color: #E0E0E0;
-            }
-            QPushButton {
-                background-color: rgba(255, 255, 255, 20);
-                border: 1px solid rgba(255, 255, 255, 40);
-                border-radius: 10px;
-                padding: 8px 15px;
-                font-size: 13px;
-            }
-            QPushButton:hover {
-                background-color: rgba(0, 200, 255, 40);
-                border: 1px solid rgba(0, 200, 255, 120);
-            }
-            QPushButton:pressed {
-                background-color: rgba(0, 150, 200, 70);
-            }
-            QPushButton:disabled {
-                background-color: rgba(255, 255, 255, 10);
-                color: rgba(224, 224, 224, 80);
-                border: 1px solid rgba(255, 255, 255, 15);
-            }
-            QLineEdit, QTextEdit, QComboBox {
-                background-color: rgba(15, 23, 42, 180);
-                border: 1px solid rgba(0, 200, 255, 60);
-                border-radius: 10px;
-                padding: 8px 12px;
-                selection-background-color: #00C8FF;
-                selection-color: #000000;
-            }
-            QLineEdit:focus, QTextEdit:focus, QComboBox:focus {
-                border: 1px solid rgba(0, 200, 255, 180);
-            }
-            QComboBox QAbstractItemView {
-                background-color: #0F172A;
-                color: #FFFFFF;
-                selection-background-color: #00C8FF;
-                selection-color: #000000;
-                border: 1px solid #00C8FF;
-            }
-            QScrollArea {
-                background: transparent;
-                border: none;
-            }
-            QScrollBar:vertical {
-                border: none;
-                background: rgba(255, 255, 255, 10);
-                width: 8px;
-                margin: 0px;
-                border-radius: 4px;
-            }
-            QScrollBar::handle:vertical {
-                background: rgba(0, 200, 255, 120);
-                border-radius: 4px;
-                min-height: 20px;
-            }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-                background: none;
-            }
-        """)
+        # Apply Anime Cyberpunk QSS Style
+        self.setStyleSheet(ANIME_CYBERPUNK_QSS)
 
     def _add_sidebar_button(self, text, page_index):
         """Creates a styled sidebar navigation button."""
@@ -301,20 +246,25 @@ class JarvisMainWindow(QMainWindow):
     def _on_page_changed(self, index):
         """Updates active sidebar button styling and refreshes view data."""
         self._update_sidebar_styles(index)
-        if index == 1:
-            self.alert_view.refresh_alerts()
+        if index == 0:
+            self.dashboard_view.update_indicators(
+                "Ready" if self.ai_provider.is_configured() else "Unconfigured",
+                self.voice_manager.get_status()
+            )
         elif index == 2:
-            self.workflow_view.refresh_presets()
+            self.alert_view.refresh_alerts()
         elif index == 3:
-            self.email_view.update_auth_status()
+            self.workflow_view.refresh_presets()
         elif index == 4:
-            self.whatsapp_view.refresh_all()
+            self.email_view.update_auth_status()
         elif index == 5:
+            self.whatsapp_view.refresh_all()
+        elif index == 6:
             self.automation_view.refresh_system_status()
             self.automation_view.refresh_audit_log()
-        elif index == 6:
-            self.task_view.refresh_tasks()
         elif index == 7:
+            self.task_view.refresh_tasks()
+        elif index == 8:
             self.memory_view.refresh_memories()
 
     def _update_sidebar_styles(self, active_index):
@@ -382,7 +332,7 @@ class JarvisMainWindow(QMainWindow):
         self.conversation_display = QTextEdit(self.chat_view)
         self.conversation_display.setReadOnly(True)
         self.conversation_display.setFont(QFont("Segoe UI", 10))
-        self.conversation_display.setPlaceholderText("JARVIS is ready. Ask me anything!")
+        self.conversation_display.setPlaceholderText("S.E.N.T.I.A.L. is ready. Ask me anything!")
         chat_layout.addWidget(self.conversation_display, stretch=1)
 
         # Command input row
@@ -399,7 +349,7 @@ class JarvisMainWindow(QMainWindow):
         input_layout.addWidget(self.mic_button)
 
         self.command_input = QLineEdit(self.chat_view)
-        self.command_input.setPlaceholderText("Ask JARVIS or type a command...")
+        self.command_input.setPlaceholderText("Ask S.E.N.T.I.A.L. or type a command...")
         self.command_input.setFont(QFont("Segoe UI", 10))
         self.command_input.setFixedHeight(42)
         self.command_input.returnPressed.connect(self._send_command)
@@ -596,7 +546,7 @@ class JarvisMainWindow(QMainWindow):
         if not self.voice_manager.is_available():
             show_error_message("Voice Unavailable", f"Voice engine is not available: {self.voice_manager.get_status()}")
             return
-        self.voice_manager.speak("Greetings! I am JARVIS, your personal desktop assistant.")
+        self.voice_manager.speak("Greetings! I am S.E.N.T.I.A.L., your personal desktop AI assistant.")
 
     def _clear_chat_history(self):
         """Clears the chat history without touching persistent tasks or memories."""
@@ -724,7 +674,7 @@ class JarvisMainWindow(QMainWindow):
 
     @asyncSlot()
     async def _send_command(self):
-        """Handles sending a command to JARVIS AI with intent understanding, safe action confirmation, and voice playback."""
+        """Handles sending a command to S.E.N.T.I.A.L. AI with intent understanding, safe action confirmation, and voice playback."""
         if self._busy:
             return
 
@@ -780,6 +730,11 @@ class JarvisMainWindow(QMainWindow):
                 else:
                     act_res = self.automation_service.launch_app(app_id, user_confirmed=True)
                     response_text += f"\n[{act_res.message}]"
+
+            elif intent_type == "open_url" and "url" in params:
+                target_url = params["url"]
+                act_res = self.automation_service.open_url(target_url, user_confirmed=True)
+                response_text += f"\n[{act_res.message}]"
 
             elif intent_type == "open_path" and ("path" in params or "file_or_folder_path" in params):
                 target_path = params.get("path") or params.get("file_or_folder_path")
@@ -894,16 +849,18 @@ class JarvisMainWindow(QMainWindow):
             self.command_input.setFocus()
 
     def _handle_gemini_response(self, response_text):
-        self._append_message("JARVIS", response_text)
+        self._append_message("S.E.N.T.I.A.L.", response_text)
         self.ai_state_changed.emit("speaking")
         self.ai_status_label.setText("AI Engine: Online & Ready")
+        if hasattr(self, "dashboard_view"):
+            self.dashboard_view.append_activity(f"S.E.N.T.I.A.L. Responded: {response_text[:60]}...")
         self._idle_timer.start(2500)
 
     def _handle_gemini_error(self, error_msg):
         if self.conversation_history and self.conversation_history[-1][0] == "User":
             self.conversation_history.pop()
 
-        self._append_message("JARVIS (System)", f"Error: {error_msg}", store=False)
+        self._append_message("S.E.N.T.I.A.L. (System)", f"Error: {error_msg}", store=False)
         self.ai_state_changed.emit("error")
         self.ai_status_label.setText("AI Engine: Error")
         self._idle_timer.start(4000)
@@ -913,9 +870,9 @@ class JarvisMainWindow(QMainWindow):
             self.conversation_history.append((sender, text))
 
         color_map = {
-            "User": "#00C8FF",
-            "JARVIS": "#7FFFD4",
-            "JARVIS (System)": "#FF6B6B"
+            "User": "#05D9E8",
+            "S.E.N.T.I.A.L.": "#FF2A6D",
+            "S.E.N.T.I.A.L. (System)": "#9D4EDD"
         }
         color = color_map.get(sender, "#E0E0E0")
         safe_text = html.escape(str(text)).replace("\n", "<br>")

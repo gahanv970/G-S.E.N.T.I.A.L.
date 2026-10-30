@@ -465,18 +465,24 @@ class WhatsAppNotificationListener(QObject):
 
         try:
             try:
-                from winsdk.windows.ui.notifications.management import (
+                from winrt.windows.ui.notifications.management import (
                     UserNotificationListener,
                     UserNotificationListenerAccessStatus,
                 )
             except ImportError:
                 try:
-                    from windows.ui.notifications.management import (
+                    from winsdk.windows.ui.notifications.management import (
                         UserNotificationListener,
                         UserNotificationListenerAccessStatus,
                     )
                 except ImportError:
-                    return False, "Manual Import / Clipboard Mode (winsdk package not installed)"
+                    try:
+                        from windows.ui.notifications.management import (
+                            UserNotificationListener,
+                            UserNotificationListenerAccessStatus,
+                        )
+                    except ImportError:
+                        return False, "Manual Import / Clipboard Mode (winrt/winsdk package not installed)"
 
             listener = UserNotificationListener.get_current()
             if not listener:

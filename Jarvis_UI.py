@@ -10,7 +10,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -31,18 +31,27 @@ from qasync import asyncSlot
 
 from ai_core_visualization import AICoreVisualization
 from automation_service import WindowsAutomationService
-from config import APP_DIR, get_config_value, load_config, save_config
+from browser_service import BrowserAutomationService
+from config import APP_DIR, get_config_value, get_secret, load_config, save_config, set_secret
 from gemini_api import DEFAULT_MODEL, SUPPORTED_MODELS, GeminiAIProvider
 from gmail_service import GmailService
-from gui_components import LiquidGlassBackground, LiquidGlassCard
+from gui_components import ANIME_CYBERPUNK_QSS, LiquidGlassBackground, LiquidGlassCard
 from memory_service import MemoryService
+from microphone_service import MicrophoneService, transcribe_audio_bytes
 from task_service import TaskService
+from alert_service import AlertNotificationService
+from workflow_engine import WorkflowEngine
 from ui_views import (
     AutomationManagementWidget,
     EmailManagementWidget,
+    MainDashboardWidget,
     MemoryManagementWidget,
+    NotificationCenterWidget,
     TaskManagementWidget,
+    WhatsAppCompanionWidget,
+    WorkflowOrchestrationWidget,
 )
+from whatsapp_service import WhatsAppNotificationListener, WhatsAppService
 from utils import show_error_message, show_info_message
 from voice_service import VoiceManager
 
@@ -53,27 +62,44 @@ MASKED_KEY = "********"
 
 class JarvisMainWindow(QMainWindow):
     """
-    The main window for the JARVIS AI desktop assistant, featuring a Liquid Glass UI.
-    Houses Chat, Email, Automation, Tasks, Memory, and Settings views.
+    The main window for S.E.N.T.I.A.L. Desktop Assistant, featuring an anime-inspired cyberpunk UI.
+    Houses Home Dashboard, Voice Chat, Alerts, Workflows, Email, WhatsApp, Automation, Tasks, Memory, and Settings views.
     """
 
     ai_state_changed = Signal(str)  # Updates the AI core visualization state
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("JARVIS AI Assistant - Personal Desktop Intelligence")
-        self.resize(1200, 800)
+        self.setWindowTitle("S.E.N.T.I.A.L. | Personal Desktop Intelligence")
+        self.resize(1240, 810)
         self.setMinimumSize(1024, 768)
 
         # Initialize Services
         self.ai_provider = GeminiAIProvider()
+        self.alert_service = AlertNotificationService()
         self.task_service = TaskService()
         self.memory_service = MemoryService()
         self.gmail_service = GmailService()
+        self.whatsapp_service = WhatsAppService()
+        self.whatsapp_listener = WhatsAppNotificationListener(
+            self.whatsapp_service, ai_provider=self.ai_provider, parent=self
+        )
         self.automation_service = WindowsAutomationService()
+        self.browser_service = BrowserAutomationService()
+        self.workflow_engine = WorkflowEngine(
+            automation_service=self.automation_service,
+            browser_service=self.browser_service,
+            gmail_service=self.gmail_service,
+            whatsapp_service=self.whatsapp_service,
+            alert_service=self.alert_service,
+            task_service=self.task_service,
+            ai_provider=self.ai_provider,
+            parent=self,
+        )
         self.voice_manager = VoiceManager()
+        self.mic_service = MicrophoneService(self)
 
-        self.conversation_history = []  # list of (role, text) tuples, role in {"User", "JARVIS"}
+        self.conversation_history = []  # list of (role, text) tuples, role in {"User", "S.E.N.T.I.A.L."}
         self._busy = False
         self._sidebar_buttons = []
 
@@ -86,12 +112,12 @@ class JarvisMainWindow(QMainWindow):
         self._load_settings()
 
         self.ai_state_changed.emit("idle")
-        logger.info("JARVIS AI application initialized successfully.")
+        logger.info("S.E.N.T.I.A.L. application initialized successfully.")
 
     # ------------------------------------------------------------------ UI Setup
 
     def _setup_ui(self):
-        """Initializes the Liquid Glass GUI components and layout."""
+        """Initializes the S.E.N.T.I.A.L. Anime Cyberpunk GUI components and layout."""
         self.background_widget = LiquidGlassBackground(self)
         self.setCentralWidget(self.background_widget)
 
@@ -100,26 +126,31 @@ class JarvisMainWindow(QMainWindow):
         self.root_layout.setSpacing(15)
 
         # --- Left sidebar (navigation) ---
-        self.sidebar = LiquidGlassCard(self.background_widget, corner_radius=24)
+        self.sidebar = LiquidGlassCard(self.background_widget, corner_radius=20, border_color=QColor(255, 42, 109, 120))
         self.sidebar.setFixedWidth(210)
         sidebar_layout = QVBoxLayout(self.sidebar)
-        sidebar_layout.setContentsMargins(12, 24, 12, 18)
-        sidebar_layout.setSpacing(10)
+        sidebar_layout.setContentsMargins(12, 20, 12, 18)
+        sidebar_layout.setSpacing(8)
 
         # App Title in Sidebar
-        app_title = QLabel("JARVIS AI")
+        app_title = QLabel("S.E.N.T.I.A.L.")
+        app_title.setObjectName("hdrAnimeTitle")
         app_title.setAlignment(Qt.AlignCenter)
         app_title.setFont(QFont("Segoe UI", 16, QFont.Bold))
-        app_title.setStyleSheet("color: #00C8FF; margin-bottom: 15px;")
+        app_title.setStyleSheet("color: #FF2A6D; margin-bottom: 10px; letter-spacing: 2px;")
         sidebar_layout.addWidget(app_title)
 
         nav_items = [
-            ("💬 Chat", 0),
-            ("📧 Email", 1),
-            ("⚡ Automation", 2),
-            ("📋 Tasks", 3),
-            ("🧠 Memory", 4),
-            ("⚙️ Settings", 5),
+            ("🏠 Dashboard", 0),
+            ("💬 Chat", 1),
+            ("🔔 Alerts", 2),
+            ("⚡ Workflows", 3),
+            ("📧 Email", 4),
+            ("📱 WhatsApp", 5),
+            ("⚙️ Automation", 6),
+            ("📋 Tasks", 7),
+            ("🧠 Memory", 8),
+            ("⚙️ Settings", 9),
         ]
 
         for text, index in nav_items:
@@ -129,9 +160,9 @@ class JarvisMainWindow(QMainWindow):
         sidebar_layout.addStretch()
 
         # Version stamp
-        ver_lbl = QLabel("v2.0 Liquid Glass")
+        ver_lbl = QLabel("v2.5 S.E.N.T.I.A.L.")
         ver_lbl.setAlignment(Qt.AlignCenter)
-        ver_lbl.setStyleSheet("color: #4A5568; font-size: 11px;")
+        ver_lbl.setStyleSheet("color: #05D9E8; font-size: 11px; font-weight: bold;")
         sidebar_layout.addWidget(ver_lbl)
 
         self.root_layout.addWidget(self.sidebar)
@@ -145,27 +176,52 @@ class JarvisMainWindow(QMainWindow):
         self.stacked_widget = QStackedWidget(self.content_area)
         self.content_layout.addWidget(self.stacked_widget)
 
-        # 0: Chat View
+        # 0: Main Home Dashboard View
+        self.dashboard_view = MainDashboardWidget(self.content_area)
+        self.dashboard_view.quick_action_triggered.connect(self.stacked_widget.setCurrentIndex)
+        self.stacked_widget.addWidget(self.dashboard_view)
+
+        # 1: Chat View
         self._setup_chat_view()
         self.stacked_widget.addWidget(self.chat_view)
 
-        # 1: Email View
+        # 2: Alert Notification Center View
+        self.alert_view = NotificationCenterWidget(self.alert_service, self.content_area)
+        self.stacked_widget.addWidget(self.alert_view)
+
+        # 3: Intelligent Workflow Orchestration View
+        self.workflow_view = WorkflowOrchestrationWidget(self.workflow_engine, self.content_area)
+        self.stacked_widget.addWidget(self.workflow_view)
+
+        # 4: Email View
         self.email_view = EmailManagementWidget(self.gmail_service, self.content_area)
         self.stacked_widget.addWidget(self.email_view)
 
-        # 2: Windows Automation View
-        self.automation_view = AutomationManagementWidget(self.automation_service, self.content_area)
+        # 5: WhatsApp Personal Companion View
+        self.whatsapp_view = WhatsAppCompanionWidget(
+            self.whatsapp_service,
+            notification_listener=self.whatsapp_listener,
+            parent=self.content_area,
+        )
+        self.stacked_widget.addWidget(self.whatsapp_view)
+
+        # 6: Windows & Browser Automation View
+        self.automation_view = AutomationManagementWidget(
+            self.automation_service,
+            browser_service=self.browser_service,
+            parent=self.content_area,
+        )
         self.stacked_widget.addWidget(self.automation_view)
 
-        # 3: Task Management View
+        # 7: Task Management View
         self.task_view = TaskManagementWidget(self.task_service, self.content_area)
         self.stacked_widget.addWidget(self.task_view)
 
-        # 4: Memory & Personalization View
+        # 8: Memory & Personalization View
         self.memory_view = MemoryManagementWidget(self.memory_service, self.content_area)
         self.stacked_widget.addWidget(self.memory_view)
 
-        # 5: Settings View
+        # 9: Settings View
         self._setup_settings_view()
         self.stacked_widget.addWidget(self.settings_view)
 
@@ -175,71 +231,8 @@ class JarvisMainWindow(QMainWindow):
         # Set initial active tab
         self._update_sidebar_styles(0)
 
-        self.setStyleSheet("""
-            QMainWindow {
-                background: transparent;
-            }
-            QLabel, QPushButton, QLineEdit, QTextEdit, QComboBox, QCheckBox {
-                font-family: 'Segoe UI', 'Roboto', sans-serif;
-                color: #E0E0E0;
-            }
-            QPushButton {
-                background-color: rgba(255, 255, 255, 20);
-                border: 1px solid rgba(255, 255, 255, 40);
-                border-radius: 10px;
-                padding: 8px 15px;
-                font-size: 13px;
-            }
-            QPushButton:hover {
-                background-color: rgba(0, 200, 255, 40);
-                border: 1px solid rgba(0, 200, 255, 120);
-            }
-            QPushButton:pressed {
-                background-color: rgba(0, 150, 200, 70);
-            }
-            QPushButton:disabled {
-                background-color: rgba(255, 255, 255, 10);
-                color: rgba(224, 224, 224, 80);
-                border: 1px solid rgba(255, 255, 255, 15);
-            }
-            QLineEdit, QTextEdit, QComboBox {
-                background-color: rgba(15, 23, 42, 180);
-                border: 1px solid rgba(0, 200, 255, 60);
-                border-radius: 10px;
-                padding: 8px 12px;
-                selection-background-color: #00C8FF;
-                selection-color: #000000;
-            }
-            QLineEdit:focus, QTextEdit:focus, QComboBox:focus {
-                border: 1px solid rgba(0, 200, 255, 180);
-            }
-            QComboBox QAbstractItemView {
-                background-color: #0F172A;
-                color: #FFFFFF;
-                selection-background-color: #00C8FF;
-                selection-color: #000000;
-                border: 1px solid #00C8FF;
-            }
-            QScrollArea {
-                background: transparent;
-                border: none;
-            }
-            QScrollBar:vertical {
-                border: none;
-                background: rgba(255, 255, 255, 10);
-                width: 8px;
-                margin: 0px;
-                border-radius: 4px;
-            }
-            QScrollBar::handle:vertical {
-                background: rgba(0, 200, 255, 120);
-                border-radius: 4px;
-                min-height: 20px;
-            }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-                background: none;
-            }
-        """)
+        # Apply Anime Cyberpunk QSS Style
+        self.setStyleSheet(ANIME_CYBERPUNK_QSS)
 
     def _add_sidebar_button(self, text, page_index):
         """Creates a styled sidebar navigation button."""
@@ -253,14 +246,25 @@ class JarvisMainWindow(QMainWindow):
     def _on_page_changed(self, index):
         """Updates active sidebar button styling and refreshes view data."""
         self._update_sidebar_styles(index)
-        if index == 1:
-            self.email_view.update_auth_status()
+        if index == 0:
+            self.dashboard_view.update_indicators(
+                "Ready" if self.ai_provider.is_configured() else "Unconfigured",
+                self.voice_manager.get_status()
+            )
         elif index == 2:
+            self.alert_view.refresh_alerts()
+        elif index == 3:
+            self.workflow_view.refresh_presets()
+        elif index == 4:
+            self.email_view.update_auth_status()
+        elif index == 5:
+            self.whatsapp_view.refresh_all()
+        elif index == 6:
             self.automation_view.refresh_system_status()
             self.automation_view.refresh_audit_log()
-        elif index == 3:
+        elif index == 7:
             self.task_view.refresh_tasks()
-        elif index == 4:
+        elif index == 8:
             self.memory_view.refresh_memories()
 
     def _update_sidebar_styles(self, active_index):
@@ -328,7 +332,7 @@ class JarvisMainWindow(QMainWindow):
         self.conversation_display = QTextEdit(self.chat_view)
         self.conversation_display.setReadOnly(True)
         self.conversation_display.setFont(QFont("Segoe UI", 10))
-        self.conversation_display.setPlaceholderText("JARVIS is ready. Ask me anything!")
+        self.conversation_display.setPlaceholderText("S.E.N.T.I.A.L. is ready. Ask me anything!")
         chat_layout.addWidget(self.conversation_display, stretch=1)
 
         # Command input row
@@ -337,8 +341,15 @@ class JarvisMainWindow(QMainWindow):
         input_layout.setContentsMargins(0, 0, 0, 0)
         input_layout.setSpacing(10)
 
+        self.mic_button = QPushButton("🎤")
+        self.mic_button.setFixedSize(42, 42)
+        self.mic_button.setCursor(Qt.PointingHandCursor)
+        self.mic_button.setToolTip("Click to start/stop voice recording")
+        self.mic_button.clicked.connect(self._toggle_microphone_recording)
+        input_layout.addWidget(self.mic_button)
+
         self.command_input = QLineEdit(self.chat_view)
-        self.command_input.setPlaceholderText("Ask JARVIS or type a command...")
+        self.command_input.setPlaceholderText("Ask S.E.N.T.I.A.L. or type a command...")
         self.command_input.setFont(QFont("Segoe UI", 10))
         self.command_input.setFixedHeight(42)
         self.command_input.returnPressed.connect(self._send_command)
@@ -426,9 +437,11 @@ class JarvisMainWindow(QMainWindow):
         voice_layout.addWidget(QLabel("<h3 style='color: #00C8FF; margin: 0;'>Voice Engine Configuration</h3>"))
         voice_row = QHBoxLayout()
         self.voice_combo = QComboBox()
-        self.voice_combo.addItems(["Disabled", "Windows SAPI (Native TTS)"])
+        self.voice_combo.addItems(["Disabled", "ElevenLabs TTS (Voice Clone)", "Windows SAPI (Native TTS)"])
         current_voice = get_config_value("voice_provider", "disabled")
-        if current_voice == "windows_sapi":
+        if current_voice == "elevenlabs":
+            self.voice_combo.setCurrentText("ElevenLabs TTS (Voice Clone)")
+        elif current_voice == "windows_sapi":
             self.voice_combo.setCurrentText("Windows SAPI (Native TTS)")
         else:
             self.voice_combo.setCurrentText("Disabled")
@@ -440,7 +453,35 @@ class JarvisMainWindow(QMainWindow):
         test_voice_btn.setCursor(Qt.PointingHandCursor)
         test_voice_btn.clicked.connect(self._test_voice)
         voice_row.addWidget(test_voice_btn, stretch=1)
+
+        stop_voice_btn = QPushButton("⏹ Stop Audio")
+        stop_voice_btn.setFixedHeight(36)
+        stop_voice_btn.setCursor(Qt.PointingHandCursor)
+        stop_voice_btn.clicked.connect(self.voice_manager.stop)
+        voice_row.addWidget(stop_voice_btn, stretch=1)
         voice_layout.addLayout(voice_row)
+
+        voice_layout.addWidget(QLabel("ElevenLabs API Key:"))
+        self.elevenlabs_key_input = QLineEdit()
+        self.elevenlabs_key_input.setEchoMode(QLineEdit.Password)
+        self.elevenlabs_key_input.setPlaceholderText("Enter ElevenLabs API Key...")
+        existing_el_key = get_secret("elevenlabs_api_key")
+        if existing_el_key:
+            self.elevenlabs_key_input.setText(MASKED_KEY)
+        voice_layout.addWidget(self.elevenlabs_key_input)
+
+        voice_layout.addWidget(QLabel("ElevenLabs Voice ID:"))
+        self.elevenlabs_voice_id_input = QLineEdit()
+        self.elevenlabs_voice_id_input.setPlaceholderText("Enter ElevenLabs Voice ID (e.g. 21m00Tcm4TlvDq8ikWAM)...")
+        existing_voice_id = get_secret("elevenlabs_voice_id") or get_config_value("elevenlabs_voice_id", "")
+        self.elevenlabs_voice_id_input.setText(existing_voice_id)
+        voice_layout.addWidget(self.elevenlabs_voice_id_input)
+
+        save_voice_settings_btn = QPushButton("Save Voice Configuration")
+        save_voice_settings_btn.setFixedHeight(36)
+        save_voice_settings_btn.setCursor(Qt.PointingHandCursor)
+        save_voice_settings_btn.clicked.connect(self._save_elevenlabs_credentials)
+        voice_layout.addWidget(save_voice_settings_btn)
 
         self.voice_status_lbl = QLabel(f"Voice Status: {self.voice_manager.get_status()}")
         self.voice_status_lbl.setStyleSheet("color: #A0AEC0; font-size: 11px;")
@@ -476,15 +517,36 @@ class JarvisMainWindow(QMainWindow):
 
     def _on_voice_provider_changed(self):
         text = self.voice_combo.currentText()
-        provider_type = "windows_sapi" if "Windows SAPI" in text else "disabled"
+        if "ElevenLabs" in text:
+            provider_type = "elevenlabs"
+        elif "Windows SAPI" in text:
+            provider_type = "windows_sapi"
+        else:
+            provider_type = "disabled"
         self.voice_manager.set_provider_type(provider_type)
         self.voice_status_lbl.setText(f"Voice Status: {self.voice_manager.get_status()}")
+
+    def _save_elevenlabs_credentials(self):
+        key = self.elevenlabs_key_input.text().strip()
+        voice_id = self.elevenlabs_voice_id_input.text().strip()
+
+        if key and key != MASKED_KEY:
+            set_secret("elevenlabs_api_key", key)
+            self.elevenlabs_key_input.setText(MASKED_KEY)
+
+        if voice_id:
+            set_secret("elevenlabs_voice_id", voice_id)
+            save_config({"elevenlabs_voice_id": voice_id})
+
+        self.voice_manager.reload_provider()
+        self.voice_status_lbl.setText(f"Voice Status: {self.voice_manager.get_status()}")
+        show_info_message("Voice Settings Saved", "ElevenLabs TTS credentials and Voice ID updated successfully.")
 
     def _test_voice(self):
         if not self.voice_manager.is_available():
             show_error_message("Voice Unavailable", f"Voice engine is not available: {self.voice_manager.get_status()}")
             return
-        self.voice_manager.speak("Greetings! I am JARVIS, your personal desktop assistant.")
+        self.voice_manager.speak("Greetings! I am S.E.N.T.I.A.L., your personal desktop AI assistant.")
 
     def _clear_chat_history(self):
         """Clears the chat history without touching persistent tasks or memories."""
@@ -559,11 +621,60 @@ class JarvisMainWindow(QMainWindow):
             self.save_key_button.setEnabled(True)
             self.ai_state_changed.emit("idle")
 
+    # ------------------------------------------------------------------ Voice Recording Slot
+
+    @asyncSlot()
+    async def _toggle_microphone_recording(self):
+        """Starts or stops push-to-talk voice recording and routes transcription to intent pipeline."""
+        if self._busy:
+            return
+
+        if self.mic_service.is_recording():
+            # Stop recording and transcribe
+            self.mic_button.setText("🎤")
+            self.mic_button.setStyleSheet("")
+            self.ai_status_label.setText("AI Engine: Transcribing Audio...")
+            self.ai_state_changed.emit("thinking")
+
+            wav_bytes = self.mic_service.stop_recording()
+            if not wav_bytes or len(wav_bytes) < 200:
+                self.ai_status_label.setText("AI Engine: No Audio Captured")
+                self.ai_state_changed.emit("idle")
+                return
+
+            try:
+                transcript = await asyncio.to_thread(
+                    transcribe_audio_bytes, wav_bytes, self.ai_provider
+                )
+                if transcript:
+                    logger.info(f"Speech Recognized: {transcript}")
+                    self.command_input.setText(transcript)
+                    await self._send_command()
+                else:
+                    show_info_message("Voice Input", "No speech detected in audio recording.")
+                    self.ai_status_label.setText("AI Engine: Online & Ready")
+                    self.ai_state_changed.emit("idle")
+            except Exception as e:
+                show_error_message("Speech Recognition Error", str(e))
+                self.ai_status_label.setText("AI Engine: Error")
+                self.ai_state_changed.emit("error")
+        else:
+            if not self.mic_service.has_microphone():
+                show_error_message("Microphone Missing", "No microphone input device detected on your system.")
+                return
+
+            started = self.mic_service.start_recording()
+            if started:
+                self.mic_button.setText("🔴")
+                self.mic_button.setStyleSheet("background-color: rgba(255, 68, 68, 120); border: 1px solid #FF4444;")
+                self.ai_status_label.setText("AI Engine: Recording Voice... Click 🔴 to Stop")
+                self.ai_state_changed.emit("speaking")
+
     # ------------------------------------------------------------------ Chat Slot
 
     @asyncSlot()
     async def _send_command(self):
-        """Handles sending a command to JARVIS AI with context injection and voice playback."""
+        """Handles sending a command to S.E.N.T.I.A.L. AI with intent understanding, safe action confirmation, and voice playback."""
         if self._busy:
             return
 
@@ -582,20 +693,134 @@ class JarvisMainWindow(QMainWindow):
         self.command_input.clear()
         self._append_message("User", user_text)
 
-        formatted_history = self._build_gemini_history()
-
         # Build prompt context from memory service
         system_context = self.memory_service.build_context_for_prompt(user_text)
 
         self._set_busy(True)
         self._idle_timer.stop()
         self.ai_state_changed.emit("thinking")
-        self.ai_status_label.setText("AI Engine: Generating Response...")
+        self.ai_status_label.setText("AI Engine: Analyzing Intent...")
 
         try:
-            response_text = await asyncio.to_thread(
-                self.ai_provider.send_message, formatted_history, model_name, system_context
+            intent_data = await asyncio.to_thread(
+                self.ai_provider.understand_intent, user_text, model_name, system_context
             )
+
+            response_text = intent_data.get("response_text", "")
+            intent_type = intent_data.get("intent_type", "general_chat")
+            params = intent_data.get("parameters", {})
+            requires_confirm = intent_data.get("requires_confirmation", False)
+
+            # Handle intent execution with confirmation and clean spoken feedback
+            if intent_type == "launch_app" and "app_id" in params:
+                app_id = params["app_id"]
+                if requires_confirm:
+                    reply = QMessageBox.question(
+                        self,
+                        "Confirm Application Launch",
+                        f"S.E.N.T.I.A.L. wants to launch '{app_id}'. Do you approve?",
+                        QMessageBox.Yes | QMessageBox.No,
+                        QMessageBox.No,
+                    )
+                    if reply == QMessageBox.Yes:
+                        act_res = self.automation_service.launch_app(app_id, user_confirmed=True)
+                        response_text += f"\n[{act_res.message}]"
+                    else:
+                        response_text = f"Action cancelled. Launching {app_id} was declined."
+                else:
+                    act_res = self.automation_service.launch_app(app_id, user_confirmed=True)
+                    response_text += f"\n[{act_res.message}]"
+
+            elif intent_type == "open_url" and "url" in params:
+                target_url = params["url"]
+                act_res = self.automation_service.open_url(target_url, user_confirmed=True)
+                response_text += f"\n[{act_res.message}]"
+
+            elif intent_type == "open_path" and ("path" in params or "file_or_folder_path" in params):
+                target_path = params.get("path") or params.get("file_or_folder_path")
+                if requires_confirm:
+                    reply = QMessageBox.question(
+                        self,
+                        "Confirm Open Path",
+                        f"S.E.N.T.I.A.L. wants to open local path '{target_path}'. Do you approve?",
+                        QMessageBox.Yes | QMessageBox.No,
+                        QMessageBox.No,
+                    )
+                    if reply == QMessageBox.Yes:
+                        act_res = self.automation_service.open_path(target_path, user_confirmed=True)
+                        response_text += f"\n[{act_res.message}]"
+                    else:
+                        response_text = f"Action cancelled. Opening '{target_path}' was declined."
+                else:
+                    act_res = self.automation_service.open_path(target_path, user_confirmed=True)
+                    response_text += f"\n[{act_res.message}]"
+
+            elif intent_type == "web_search" and "query" in params:
+                search_q = params["query"]
+                act_res = self.automation_service.web_search(search_q, user_confirmed=True)
+                response_text += f"\n[{act_res.message}]"
+
+            elif intent_type == "extract_web_text" and "url" in params:
+                target_url = params["url"]
+                if requires_confirm:
+                    reply = QMessageBox.question(
+                        self,
+                        "Confirm Web Text Extraction",
+                        f"S.E.N.T.I.A.L. wants to fetch and extract readable text from '{target_url}'. Do you approve?",
+                        QMessageBox.Yes | QMessageBox.No,
+                        QMessageBox.No,
+                    )
+                    if reply == QMessageBox.Yes:
+                        res = await asyncio.to_thread(self.browser_service.extract_page_text, target_url)
+                        text_prev = res.data.get('extracted_text', '')[:500] if res.data else ""
+                        response_text += f"\n[{res.message}]\nContent Preview:\n{text_prev}"
+                    else:
+                        response_text = f"Action cancelled. Extraction from '{target_url}' was declined."
+                else:
+                    res = await asyncio.to_thread(self.browser_service.extract_page_text, target_url)
+                    response_text += f"\n[{res.message}]"
+
+            elif intent_type == "window_management" and "action" in params and "app_id" in params:
+                win_act = params["action"]
+                app_id = params["app_id"]
+                if requires_confirm:
+                    reply = QMessageBox.question(
+                        self,
+                        "Confirm Window Control",
+                        f"S.E.N.T.I.A.L. wants to {win_act} window for '{app_id}'. Do you approve?",
+                        QMessageBox.Yes | QMessageBox.No,
+                        QMessageBox.No,
+                    )
+                    if reply == QMessageBox.Yes:
+                        act_res = self.automation_service.window_management(win_act, app_id, user_confirmed=True)
+                        response_text += f"\n[{act_res.message}]"
+                    else:
+                        response_text = f"Action cancelled. Window management for '{app_id}' was declined."
+                else:
+                    act_res = self.automation_service.window_management(win_act, app_id, user_confirmed=True)
+                    response_text += f"\n[{act_res.message}]"
+
+            elif intent_type == "create_task" and "title" in params:
+                task_title = params["title"]
+                if requires_confirm:
+                    reply = QMessageBox.question(
+                        self,
+                        "Confirm Task Creation",
+                        f"Create task '{task_title}'?",
+                        QMessageBox.Yes | QMessageBox.No,
+                        QMessageBox.No,
+                    )
+                    if reply == QMessageBox.Yes:
+                        task = self.task_service.create_task(
+                            title=task_title,
+                            description=params.get("description", ""),
+                            priority=params.get("priority", "MEDIUM").upper(),
+                            due_date=params.get("due_date"),
+                        )
+                        response_text += f"\n[Task #{task.id} created successfully]"
+                    else:
+                        response_text = f"Task creation cancelled for '{task_title}'."
+
             self._handle_gemini_response(response_text)
 
             # Speak response via voice manager if enabled
@@ -619,20 +844,23 @@ class JarvisMainWindow(QMainWindow):
         self._busy = busy
         self.send_button.setEnabled(not busy)
         self.command_input.setEnabled(not busy)
+        self.mic_button.setEnabled(not busy)
         if not busy:
             self.command_input.setFocus()
 
     def _handle_gemini_response(self, response_text):
-        self._append_message("JARVIS", response_text)
+        self._append_message("S.E.N.T.I.A.L.", response_text)
         self.ai_state_changed.emit("speaking")
         self.ai_status_label.setText("AI Engine: Online & Ready")
+        if hasattr(self, "dashboard_view"):
+            self.dashboard_view.append_activity(f"S.E.N.T.I.A.L. Responded: {response_text[:60]}...")
         self._idle_timer.start(2500)
 
     def _handle_gemini_error(self, error_msg):
         if self.conversation_history and self.conversation_history[-1][0] == "User":
             self.conversation_history.pop()
 
-        self._append_message("JARVIS (System)", f"Error: {error_msg}", store=False)
+        self._append_message("S.E.N.T.I.A.L. (System)", f"Error: {error_msg}", store=False)
         self.ai_state_changed.emit("error")
         self.ai_status_label.setText("AI Engine: Error")
         self._idle_timer.start(4000)
@@ -642,9 +870,9 @@ class JarvisMainWindow(QMainWindow):
             self.conversation_history.append((sender, text))
 
         color_map = {
-            "User": "#00C8FF",
-            "JARVIS": "#7FFFD4",
-            "JARVIS (System)": "#FF6B6B"
+            "User": "#05D9E8",
+            "S.E.N.T.I.A.L.": "#FF2A6D",
+            "S.E.N.T.I.A.L. (System)": "#9D4EDD"
         }
         color = color_map.get(sender, "#E0E0E0")
         safe_text = html.escape(str(text)).replace("\n", "<br>")

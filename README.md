@@ -1,50 +1,50 @@
-# JARVIS AI — Personal Windows Desktop AI Assistant
+# S.E.N.T.I.A.L. — Personal Windows Desktop AI Assistant
 
-JARVIS AI is a cloud-powered personal desktop AI assistant built natively with **Python**, **PySide6**, and the modern official **Google Gen AI SDK** (`google-genai`). Featuring a dark glassmorphic ("Liquid Glass") user interface and animated AI core visualization, JARVIS provides intelligent chat, persistent task management, long-term memory personalization, safe Windows automation, and Gmail integration.
+**S.E.N.T.I.A.L.** (*Smart Electronic Networked Telemetric Intelligence & Autonomous Liaison*) is a cloud-powered personal desktop AI assistant built natively with **Python**, **PySide6**, and the modern official **Google Gen AI SDK** (`google-genai`). Featuring an anime-inspired cyberpunk interface and animated AI core visualization, S.E.N.T.I.A.L. provides intelligent chat, persistent task management, long-term memory personalization, safe Windows/browser automation, Gmail draft & email controls, WhatsApp companion mode, and a centralized Notification Intelligence Alert Center.
 
 ---
 
 ## ✨ Key Capabilities
 
-- **Liquid Glass Interface**: High-tech translucent visual aesthetic with custom gradients and responsive layouts built natively on Qt/PySide6.
-- **Animated AI Core**: Dynamic Arc Reactor core visualization reflecting real-time AI states (*Idle*, *Thinking*, *Speaking*, *Error*).
-- **Google Gen AI SDK (`google-genai`)**: Centralized Gemini AI integration with model support (`gemini-2.0-flash`, `gemini-2.5-flash`, `gemini-2.5-pro`, `gemini-1.5-flash`, `gemini-1.5-pro`) and memory context injection.
+- **Anime Cyberpunk Interface**: Original futuristic anime desktop interface with deep midnight background, glowing crimson/cyan/violet neon accents, custom navigation, and a Home Dashboard.
+- **Home Dashboard**: Polished dashboard featuring system status, live digital clock, Gemini AI and ElevenLabs connection indicators, quick action tiles, notification summaries, and recent activity logs.
+- **Animated S.E.N.T.I.A.L. Core**: Dynamic AI core visualization reflecting real-time AI states (*Idle*, *Thinking*, *Speaking*, *Error*).
+- **Google Gen AI SDK (`google-genai`)**: Centralized Gemini AI integration with model support (`gemini-2.0-flash`, `gemini-2.5-flash`, `gemini-2.5-pro`) and structured intent understanding with strict allowlist validation.
+- **ElevenLabs & SAPI Voice**: Official ElevenLabs REST API text-to-speech voice clone provider with seamless fallback to native Windows SAPI.
+- **Notification Intelligence & Alert Center**: Centralized alert aggregation feed ranking WhatsApp Desktop and Gmail notifications by urgency (`CRITICAL`, `HIGH`, `NORMAL`, `LOW`) with priority contact locks against prompt injection.
+- **WhatsApp Personal Companion**: Smart contact intelligence, message analysis, urgency rating, AI reply drafting, and clipboard copying with optional Windows WinRT notification monitoring.
 - **Persistent Task Management**: Full SQLite-backed task tracking with CRUD operations, priority levels (`LOW`, `MEDIUM`, `HIGH`, `CRITICAL`), due dates, status toggles, filtering, and real-time search.
 - **Memory & Personalization Service**: Persistent context store and user preferences (name, communication tone, programming preferences). Injects relevant memories into Gemini prompts; automatically rejects sensitive credentials or secrets.
-- **Safe Windows Automation**: Controlled action allowlist for approved apps (Notepad, Calculator, File Explorer, Paint, Task Manager, Command Prompt), validated HTTP/HTTPS URL opening, system resource telemetry, and multi-step workflows. Consequential actions require explicit user confirmation.
-- **Google Gmail Integration**: Official Google Gmail API integration using OAuth 2.0 InstalledAppFlow, mailbox search, message detail viewing, draft saving, and strictly user-confirmed email dispatching.
-- **Provider-Independent Voice Architecture**: Non-blocking text-to-speech abstraction supporting Windows SAPI and designed for future Edge TTS / Kokoro TTS integrations.
-- **Secure Key Storage**: API keys and tokens stored securely via the OS Keyring / Credential Manager with encrypted local fallbacks.
+- **Safe Windows & Browser Automation**: Controlled action allowlist for approved apps (Notepad, Calculator, File Explorer, Paint, Task Manager, Command Prompt), validated HTTP/HTTPS URL opening, private network blocking, path traversal protection, readable web page text extraction, and multi-step workflow orchestration. Consequential actions require explicit user confirmation.
+- **Google Gmail Integration**: Official Google Gmail API integration using OAuth 2.0 InstalledAppFlow, mailbox search, message detail viewing, draft sync, and strictly user-confirmed email dispatching.
+- **Secure Secret Storage**: API keys and OAuth tokens stored securely via the OS Keyring / Credential Manager with encrypted local fallbacks.
 
 ---
 
 ## 🛠️ Project Architecture
 
 ```
-G-AI_ASSISTANT/
+S.E.N.T.I.A.L./
 ├── main.py                  # Application entry point with qasync event loop integration
 ├── Jarvis_UI.py             # Main window controller, navigation, and chat handling
-├── ui_views.py              # Dedicated Liquid Glass widgets for Tasks, Memory, Email, Automation
-├── gemini_api.py            # Centralized Google Gen AI provider with memory context injection
+├── ui_views.py              # Dedicated UI widgets for Dashboard, Tasks, Memory, Email, WhatsApp, Alerts, Workflows, Automation
+├── gemini_api.py            # Centralized Google Gen AI provider with structured intent parsing
 ├── task_service.py          # SQLite-backed persistent task manager (CRUD, filtering, search)
 ├── memory_service.py        # Persistent context & personalization service with secret filtering
 ├── gmail_service.py         # Official Gmail API service (OAuth 2.0, mailbox, drafts, safe send)
-├── automation_service.py    # Windows automation engine (allowlist, safe URLs, system telemetry)
-├── voice_service.py         # Provider-independent text-to-speech engine (Windows SAPI / mock)
-├── ai_core_visualization.py # Animated Arc Reactor AI Core widget
-├── gui_components.py        # Liquid Glass UI card and background widgets
+├── whatsapp_service.py      # Smart contact intelligence, WinRT notification listener, AI message analysis, and reply drafting
+├── alert_service.py         # Centralized Alert Notification aggregation service
+├── workflow_engine.py       # Multi-step sequential workflow orchestration engine
+├── browser_service.py       # Browser automation, URL scheme validation, private IP blocking, and HTML text extraction
+├── automation_service.py    # Windows automation engine (allowlist, path traversal protection, system telemetry)
+├── voice_service.py         # ElevenLabs REST TTS provider with Windows SAPI fallback
+├── microphone_service.py    # PySide6 QtMultimedia push-to-talk microphone STT service
+├── ai_core_visualization.py # Animated S.E.N.T.I.A.L. Core widget
+├── gui_components.py        # Anime Cyberpunk stylesheet and glass card components
 ├── config.py                # Configuration and secure credential manager (Keyring + fallback)
 ├── utils.py                 # Application-wide logging and message dialogs
 ├── requirements.txt         # Project dependencies
-├── tests/                   # Comprehensive automated test suite (35 unit tests)
-│   ├── conftest.py
-│   ├── test_config.py
-│   ├── test_gemini_api.py
-│   ├── test_task_service.py
-│   ├── test_memory_service.py
-│   ├── test_gmail_service.py
-│   ├── test_automation_service.py
-│   └── test_voice_service.py
+├── tests/                   # Comprehensive automated test suite (111 unit tests)
 └── data/                    # Local persistent storage (.gitignore protected)
 ```
 
@@ -80,25 +80,25 @@ G-AI_ASSISTANT/
 ## ⚙️ Configuration & Setup
 
 1. **Gemini API Key**:
-   - Open JARVIS AI and click **Settings** (⚙️) on the sidebar.
-   - Enter your Gemini API key and select your preferred model (`gemini-3.8-flash`).
-   - Click **Save & Validate Credentials**. Your key will be securely saved into the Windows Credential Manager.
+   - Open S.E.N.T.I.A.L. and click **Settings** (⚙️) on the sidebar.
+   - Enter your Gemini API key and select your preferred model (`gemini-2.0-flash`).
+   - Click **Save & Validate Credentials**. Your key will be securely saved into OS Keyring.
 
-2. **Gmail OAuth Integration** (Optional):
+2. **Gmail OAuth Integration**:
    - In Google Cloud Console, enable the **Gmail API** and create **OAuth 2.0 Client ID (Desktop app)** credentials.
-   - Download the client secrets file and place it at:
+   - Download the client secrets file and save it as:
      ```
      data/gmail_credentials.json
      ```
    - Navigate to the **Email** tab (📧) and click **Connect Account** to authorize via browser.
 
-3. **Windows Automation**:
+3. **Windows & Browser Automation**:
    - Applications are executed from the strictly controlled allowlist without shell interpreters.
    - You can toggle confirmation requirements under **Settings** > **Automation Security**.
 
 4. **Running Tests**:
    ```bash
-   python -m pytest tests --rootdir=. -o cache_dir=.pytest_cache -v
+   QT_QPA_PLATFORM=offscreen python -m pytest tests -v
    ```
 
 ---

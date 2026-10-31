@@ -6,7 +6,7 @@ from PySide6.QtWidgets import QWidget
 
 class AICoreVisualization(QWidget):
     """
-    Animated JARVIS Arc Reactor / AI Core visualization component.
+    Animated S.E.N.T.I.A.L. Core visualization component.
     Displays dynamic rotating glowing rings and pulsing core according to state:
     idle, thinking, speaking, error.
     """
@@ -73,7 +73,7 @@ class AICoreVisualization(QWidget):
         else:  # idle
             primary_color = QColor(0, 180, 240)
             secondary_color = QColor(0, 100, 200)
-            status_text = "JARVIS ONLINE"
+            status_text = "S.E.N.T.I.A.L. ONLINE"
 
         # Outer ring
         pen = QPen(primary_color, 2)

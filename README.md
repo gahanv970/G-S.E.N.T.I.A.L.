@@ -81,7 +81,7 @@ S.E.N.T.I.A.L./
 
 1. **Gemini API Key**:
    - Open S.E.N.T.I.A.L. and click **Settings** (⚙️) on the sidebar.
-   - Enter your Gemini API key and select your preferred model (`gemini-2.0-flash`).
+   - Enter your Gemini API key and select your preferred model (`gemini-3.6-flash`).
    - Click **Save & Validate Credentials**. Your key will be securely saved into OS Keyring.
 
 2. **Gmail OAuth Integration**:

@@ -38,7 +38,7 @@ def test_provider_mocked_message_generation():
     provider.set_api_key("fake_key_for_testing")
 
     mock_response = MagicMock()
-    mock_response.text = "Hello! I am JARVIS, ready to assist you."
+    mock_response.text = "Hello! I am S.E.N.T.I.A.L., ready to assist you."
 
     mock_client = MagicMock()
     mock_client.models.generate_content.return_value = mock_response
@@ -52,7 +52,7 @@ def test_provider_mocked_message_generation():
         system_context="User is testing the assistant.",
     )
 
-    assert "JARVIS" in response
+    assert "S.E.N.T.I.A.L." in response
     assert mock_client.models.generate_content.called
     call_kwargs = mock_client.models.generate_content.call_args.kwargs
     assert "User is testing the assistant." in call_kwargs["config"].system_instruction

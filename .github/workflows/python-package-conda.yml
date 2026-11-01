@@ -41,4 +41,4 @@ jobs:
         QT_QPA_PLATFORM: offscreen
       run: |
         python -c "import main, Jarvis_UI, gemini_api, config, gui_components, ai_core_visualization, utils; print('Imports successful!')"
-        python -c "from PySide6.QtWidgets import QApplication; import sys, Jarvis_UI; app = QApplication(sys.argv); w = Jarvis_UI.JarvisMainWindow(); assert 'JARVIS AI Assistant' in w.windowTitle()"
+        python -c "from PySide6.QtWidgets import QApplication; import sys, Jarvis_UI; app = QApplication(sys.argv); w = Jarvis_UI.JarvisMainWindow(); assert 'S.E.N.T.I.A.L.' in w.windowTitle()"

@@ -7,11 +7,16 @@ and future pluggability for Edge TTS or Kokoro TTS.
 
 from abc import ABC, abstractmethod
 import logging
+import os
 import sys
+import tempfile
 import threading
 from typing import Optional
 
-from config import get_config_value, save_config
+from PySide6.QtCore import QObject, QUrl, Signal, Slot
+from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
+
+from config import get_config_value, get_secret, save_config, set_secret
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +82,173 @@ class MockVoiceProvider(VoiceProvider):
 
     def get_status(self) -> str:
         return "Mock TTS active"
+
+
+class AudioPlayerSignals(QObject):
+    play_audio_signal = Signal(bytes)
+    status_changed_signal = Signal(str)
+
+
+class ElevenLabsVoiceProvider(VoiceProvider):
+    """
+    ElevenLabs Text-to-Speech provider for custom authorized voice clones.
+    Generates audio asynchronously via official ElevenLabs REST API, streams output safely on Qt main thread,
+    and falls back to Windows SAPI if API calls or audio playback fail.
+    """
+
+    def __init__(self):
+        self._api_key: Optional[str] = None
+        self._voice_id: Optional[str] = None
+        self._status: str = "Initializing ElevenLabs..."
+        self._available: bool = False
+        self._current_player: Optional[QMediaPlayer] = None
+        self._audio_output: Optional[QAudioOutput] = None
+        self._temp_file_path: Optional[str] = None
+        self._sapi_fallback = WindowsSapiVoiceProvider()
+        self._lock = threading.Lock()
+
+        # Qt thread-safe signal for audio playback
+        self._signals = AudioPlayerSignals()
+        self._signals.play_audio_signal.connect(self._on_play_audio_bytes)
+        self._signals.status_changed_signal.connect(self._on_status_changed)
+
+        self.reload_credentials()
+
+    def reload_credentials(self) -> None:
+        """Loads ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID from env or secure store."""
+        self._api_key = get_secret("elevenlabs_api_key")
+        self._voice_id = get_secret("elevenlabs_voice_id") or get_config_value("elevenlabs_voice_id", "")
+
+        if self._api_key and self._voice_id:
+            self._available = True
+            masked_id = self._voice_id[:6] + "..." if len(self._voice_id) > 6 else self._voice_id
+            self._status = f"ElevenLabs TTS ready (Voice ID: {masked_id})"
+        elif not self._api_key:
+            self._available = False
+            self._status = "ElevenLabs API Key missing (Set ELEVENLABS_API_KEY env or configure in Settings)"
+        else:
+            self._available = False
+            self._status = "ElevenLabs Voice ID missing (Set ELEVENLABS_VOICE_ID env or configure in Settings)"
+
+    def speak(self, text: str) -> None:
+        """Generates speech via ElevenLabs API in background thread and triggers main thread playback."""
+        clean_text = (text or "").strip()
+        if not clean_text:
+            return
+
+        if not self.is_available():
+            logger.warning(f"ElevenLabs TTS unavailable ({self.get_status()}). Falling back to Windows SAPI.")
+            self._sapi_fallback.speak(clean_text)
+            return
+
+        def _worker():
+            try:
+                import requests
+                self._signals.status_changed_signal.emit("ElevenLabs API: Generating audio...")
+                url = f"https://api.elevenlabs.io/v1/text-to-speech/{self._voice_id}"
+                headers = {
+                    "Accept": "audio/mpeg",
+                    "Content-Type": "application/json",
+                    "xi-api-key": self._api_key,
+                }
+                payload = {
+                    "text": clean_text,
+                    "model_id": "eleven_monolingual_v1",
+                    "voice_settings": {
+                        "stability": 0.5,
+                        "similarity_boost": 0.75,
+                    },
+                }
+                response = requests.post(url, json=payload, headers=headers, timeout=12)
+                if response.status_code == 200 and response.content and len(response.content) > 100:
+                    audio_data = response.content
+                    self._play_audio_bytes(audio_data)
+                else:
+                    err_msg = f"HTTP {response.status_code}"
+                    if response.status_code == 401:
+                        err_msg = "401 Unauthorized API Key"
+                    elif response.status_code == 404:
+                        err_msg = "404 Invalid Voice ID"
+                    logger.error(f"ElevenLabs TTS failed ({err_msg}). Falling back to Windows SAPI.")
+                    self._signals.status_changed_signal.emit(f"ElevenLabs Error ({err_msg}). Using SAPI Fallback.")
+                    self._sapi_fallback.speak(clean_text)
+            except Exception as e:
+                logger.error(f"ElevenLabs TTS generation failed: {e}. Falling back to Windows SAPI.")
+                self._signals.status_changed_signal.emit(f"ElevenLabs Network Error. Using SAPI Fallback.")
+                self._sapi_fallback.speak(clean_text)
+
+        t = threading.Thread(target=_worker, daemon=True)
+        t.start()
+
+    def _play_audio_bytes(self, audio_bytes: bytes) -> None:
+        """Emits signal to trigger main thread audio playback safely."""
+        self._signals.play_audio_signal.emit(audio_bytes)
+
+    @Slot(str)
+    def _on_status_changed(self, status_str: str) -> None:
+        self._status = status_str
+
+    @Slot(bytes)
+    def _on_play_audio_bytes(self, audio_bytes: bytes) -> None:
+        """Executes audio playback safely on Qt main GUI thread with temp file cleanup."""
+        try:
+            self._cleanup_temp_file()
+
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as f:
+                f.write(audio_bytes)
+                self._temp_file_path = f.name
+
+            with self._lock:
+                if self._current_player:
+                    try:
+                        self._current_player.stop()
+                    except Exception:
+                        pass
+
+                self._current_player = QMediaPlayer()
+                self._audio_output = QAudioOutput()
+                self._current_player.setAudioOutput(self._audio_output)
+                self._audio_output.setVolume(1.0)
+                self._current_player.setSource(QUrl.fromLocalFile(self._temp_file_path))
+                self._current_player.mediaStatusChanged.connect(self._on_media_status_changed)
+                self._current_player.play()
+                self._status = "ElevenLabs TTS: Playing audio output..."
+        except Exception as e:
+            logger.error(f"Audio playback error: {e}")
+            self._status = f"Playback Error: {e}"
+
+    def _on_media_status_changed(self, status):
+        """Cleans up temp audio file when media finishes or stops."""
+        if status in (QMediaPlayer.EndOfMedia, QMediaPlayer.StoppedState):
+            self._status = f"ElevenLabs TTS ready (Voice ID: {self._voice_id[:6]}...)"
+            self._cleanup_temp_file()
+
+    def _cleanup_temp_file(self):
+        """Safely removes temporary MP3 audio file."""
+        if self._temp_file_path and os.path.exists(self._temp_file_path):
+            try:
+                os.unlink(self._temp_file_path)
+            except Exception as e:
+                logger.debug(f"Could not delete temp audio file: {e}")
+            finally:
+                self._temp_file_path = None
+
+    def stop(self) -> None:
+        """Stops ongoing ElevenLabs audio playback and cleans temp files."""
+        with self._lock:
+            if self._current_player:
+                try:
+                    self._current_player.stop()
+                except Exception as e:
+                    logger.debug(f"Error stopping player: {e}")
+        self._sapi_fallback.stop()
+        self._cleanup_temp_file()
+
+    def is_available(self) -> bool:
+        return self._available
+
+    def get_status(self) -> str:
+        return self._status
 
 
 class WindowsSapiVoiceProvider(VoiceProvider):
@@ -159,7 +331,9 @@ class VoiceManager:
     def reload_provider(self) -> None:
         """Reloads voice provider from configuration."""
         provider_name = get_config_value("voice_provider", "disabled").lower()
-        if provider_name == "windows_sapi":
+        if provider_name == "elevenlabs":
+            self._provider = ElevenLabsVoiceProvider()
+        elif provider_name == "windows_sapi":
             self._provider = WindowsSapiVoiceProvider()
         elif provider_name == "mock":
             self._provider = MockVoiceProvider()
